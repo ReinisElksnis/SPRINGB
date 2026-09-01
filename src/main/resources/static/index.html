@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spring Boot Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #response {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+            border-radius: 4px;
+            display: none;
+        }
+        .section {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #eee;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        #ordersTable {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Spring Boot Demo</h1>
+        <p>Enter your name to get a greeting from the REST API:</p>
+
+        <input type="text" id="nameInput" placeholder="Enter your name" value="World">
+        <button onclick="fetchGreeting()">Get Greeting</button>
+
+        <div id="response"></div>
+
+        <div class="section">
+            <h2>Orders</h2>
+            <p>Fetch and display orders from the database:</p>
+            <button onclick="fetchOrders()">Load Orders</button>
+
+            <div id="ordersTable">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Customer</th>
+                            <th>Product</th>
+                            <th>Amount</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ordersBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchGreeting() {
+            const name = document.getElementById('nameInput').value || 'World';
+            const responseDiv = document.getElementById('response');
+
+            try {
+                const response = await fetch(`/api/hello?name=${encodeURIComponent(name)}`);
+                const data = await response.json();
+
+                responseDiv.style.display = 'block';
+                responseDiv.innerHTML = `
+                    <strong>Response:</strong><br>
+                    ${data.message}<br>
+                    <small>Timestamp: ${data.timestamp}</small>
+                `;
+            } catch (error) {
+                responseDiv.style.display = 'block';
+                responseDiv.style.borderLeftColor = '#f44336';
+                responseDiv.innerHTML = `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('nameInput').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                fetchGreeting();
+            }
+        });
+
+        async function fetchOrders() {
+            const ordersTable = document.getElementById('ordersTable');
+            const ordersBody = document.getElementById('ordersBody');
+
+            try {
+                const response = await fetch('/api/orders');
+                const orders = await response.json();
+
+                ordersBody.innerHTML = '';
+
+                if (orders.length === 0) {
+                    ordersBody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No orders found</td></tr>';
+                } else {
+                    orders.forEach(order => {
+                        const row = document.createElement('tr');
+                        const date = new Date(order.orderDate).toLocaleString();
+                        row.innerHTML = `
+                            <td>${order.id}</td>
+                            <td>${order.customerName}</td>
+                            <td>${order.product}</td>
+                            <td>$${order.amount.toFixed(2)}</td>
+                            <td>${date}</td>
+                        `;
+                        ordersBody.appendChild(row);
+                    });
+                }
+
+                ordersTable.style.display = 'block';
+            } catch (error) {
+                ordersBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error: ${error.message}</td></tr>`;
+                ordersTable.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>
