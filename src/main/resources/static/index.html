@@ -74,6 +74,43 @@
         #ordersTable {
             display: none;
         }
+        .customer-link {
+            color: #4CAF50;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .customer-link:hover {
+            text-decoration: underline;
+        }
+        #customerModal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: white;
+            margin: 10% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 500px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #000;
+        }
     </style>
 </head>
 <body>
@@ -106,6 +143,15 @@
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- Customer Modal -->
+    <div id="customerModal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCustomerModal()">&times;</span>
+            <h2>Customer Details</h2>
+            <div id="customerDetails"></div>
         </div>
     </div>
 
@@ -156,7 +202,7 @@
                         const date = new Date(order.orderDate).toLocaleString();
                         row.innerHTML = `
                             <td>${order.id}</td>
-                            <td>${order.customerName}</td>
+                            <td><a class="customer-link" onclick="viewCustomer(${order.customerId})">${order.customerName}</a></td>
                             <td>${order.product}</td>
                             <td>$${order.amount.toFixed(2)}</td>
                             <td>${date}</td>
@@ -169,6 +215,40 @@
             } catch (error) {
                 ordersBody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error: ${error.message}</td></tr>`;
                 ordersTable.style.display = 'block';
+            }
+        }
+
+        async function viewCustomer(customerId) {
+            const modal = document.getElementById('customerModal');
+            const customerDetails = document.getElementById('customerDetails');
+
+            try {
+                const response = await fetch(`/api/customers/${customerId}`);
+                const customer = await response.json();
+
+                customerDetails.innerHTML = `
+                    <p><strong>ID:</strong> ${customer.id}</p>
+                    <p><strong>Name:</strong> ${customer.name}</p>
+                    <p><strong>Email:</strong> ${customer.email}</p>
+                    <p><strong>Phone:</strong> ${customer.phone || 'N/A'}</p>
+                `;
+
+                modal.style.display = 'block';
+            } catch (error) {
+                customerDetails.innerHTML = `<p style="color: red;">Error loading customer: ${error.message}</p>`;
+                modal.style.display = 'block';
+            }
+        }
+
+        function closeCustomerModal() {
+            document.getElementById('customerModal').style.display = 'none';
+        }
+
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+            const modal = document.getElementById('customerModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
             }
         }
     </script>
