@@ -4,7 +4,6 @@ import lv.ray.springb.dto.OrderDTO;
 import lv.ray.springb.entity.Order;
 import lv.ray.springb.service.OrderService;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 

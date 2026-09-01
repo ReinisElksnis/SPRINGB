@@ -3,7 +3,6 @@ package lv.ray.springb.controller;
 import lv.ray.springb.entity.Customer;
 import lv.ray.springb.service.CustomerService;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
