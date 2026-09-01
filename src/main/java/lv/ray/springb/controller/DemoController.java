@@ -1,5 +1,12 @@
 package lv.ray.springb.controller;
 
+import lv.ray.springb.constants.ApiConstants;
+import lv.ray.springb.constants.ApiConstants.Defaults;
+import lv.ray.springb.constants.ApiConstants.Endpoints;
+import lv.ray.springb.constants.ApiConstants.Messages;
+import lv.ray.springb.constants.ApiConstants.ResponseKeys;
+import lv.ray.springb.constants.ApiConstants.SubPaths;
+
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -7,17 +14,17 @@ import java.util.Map;
 
 
 @RestController
-@RequestMapping("/api")
-@CrossOrigin(origins = "*")
+@RequestMapping(Endpoints.API)
+@CrossOrigin(origins = ApiConstants.ALL_ORIGINS)
 public class DemoController
 {
 
-	@GetMapping("/hello")
-	public Map<String, String> sayHello(@RequestParam(defaultValue = "World") final String name)
+	@GetMapping(SubPaths.HELLO)
+	public Map<String, String> sayHello(@RequestParam(defaultValue = Defaults.GREETING_NAME) final String name)
 	{
 		final Map<String, String> response = new HashMap<>();
-		response.put("message", "Hello, " + name + "!");
-		response.put("timestamp", String.valueOf(System.currentTimeMillis()));
+		response.put(ResponseKeys.MESSAGE, String.format(Messages.GREETING, name));
+		response.put(ResponseKeys.TIMESTAMP, String.valueOf(System.currentTimeMillis()));
 
 		return response;
 	}

@@ -3,6 +3,11 @@ package lv.ray.springb.controller;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
+import lv.ray.springb.constants.ApiConstants;
+import lv.ray.springb.constants.ApiConstants.Endpoints;
+import lv.ray.springb.constants.ApiConstants.Messages;
+import lv.ray.springb.constants.ApiConstants.ResponseKeys;
+import lv.ray.springb.constants.ApiConstants.SubPaths;
 import lv.ray.springb.dto.LoginRequest;
 import lv.ray.springb.dto.RegistrationRequest;
 import lv.ray.springb.dto.UserDTO;
@@ -28,8 +33,8 @@ import java.util.Map;
 
 
 @RestController
-@RequestMapping("/api/auth")
-@CrossOrigin(origins = "*")
+@RequestMapping(Endpoints.AUTH)
+@CrossOrigin(origins = ApiConstants.ALL_ORIGINS)
 public class AuthController
 {
 
@@ -58,7 +63,7 @@ public class AuthController
 	 * Creates an account and signs it straight in, so registering lands the visitor on the demo
 	 * already logged in.
 	 */
-	@PostMapping("/register")
+	@PostMapping(SubPaths.REGISTER)
 	public ResponseEntity<UserDTO> register(@RequestBody final RegistrationRequest request,
 			final HttpServletRequest httpRequest,
 			final HttpServletResponse httpResponse)
@@ -69,7 +74,7 @@ public class AuthController
 		return ResponseEntity.status(HttpStatus.CREATED).body(UserDTO.from(user));
 	}
 
-	@PostMapping("/login")
+	@PostMapping(SubPaths.LOGIN)
 	public ResponseEntity<UserDTO> login(@RequestBody final LoginRequest request,
 			final HttpServletRequest httpRequest,
 			final HttpServletResponse httpResponse)
@@ -82,7 +87,7 @@ public class AuthController
 				.orElse(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
 	}
 
-	@PostMapping("/logout")
+	@PostMapping(SubPaths.LOGOUT)
 	public ResponseEntity<Void> logout(final HttpServletRequest httpRequest)
 	{
 		final HttpSession session = httpRequest.getSession(false);
@@ -98,27 +103,28 @@ public class AuthController
 	/**
 	 * Always answers 200 - the page uses it to decide whether to show "Sign in" or the account panel.
 	 */
-	@GetMapping("/me")
+	@GetMapping(SubPaths.ME)
 	public Map<String, Object> currentUser(final Authentication authentication)
 	{
 		if (!trustResolver.isAuthenticated(authentication))
 		{
-			return Map.of("authenticated", false);
+			return Map.of(ResponseKeys.AUTHENTICATED, false);
 		}
 
 		return appUserService.getByUsername(authentication.getName())
-				.<Map<String, Object>> map(user -> Map.of("authenticated", true, "user", UserDTO.from(user)))
-				.orElseGet(() -> Map.of("authenticated", false));
+				.<Map<String, Object>> map(
+						user -> Map.of(ResponseKeys.AUTHENTICATED, true, ResponseKeys.USER, UserDTO.from(user)))
+				.orElseGet(() -> Map.of(ResponseKeys.AUTHENTICATED, false));
 	}
 
 	/**
 	 * The one endpoint in the demo that is not public - it answers 401 without a session.
 	 */
-	@GetMapping("/members")
+	@GetMapping(SubPaths.MEMBERS)
 	public Map<String, String> membersOnly(final Authentication authentication)
 	{
-		return Map.of("message", "Members-only content for " + authentication.getName(),
-				"timestamp", String.valueOf(System.currentTimeMillis()));
+		return Map.of(ResponseKeys.MESSAGE, String.format(Messages.MEMBERS_ONLY, authentication.getName()),
+				ResponseKeys.TIMESTAMP, String.valueOf(System.currentTimeMillis()));
 	}
 
 	private Authentication authenticate(final String username,
@@ -149,7 +155,7 @@ public class AuthController
 	@ExceptionHandler(RegistrationException.class)
 	public ResponseEntity<Map<String, String>> handleRegistrationException(final RegistrationException exception)
 	{
-		return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));
+		return ResponseEntity.badRequest().body(Map.of(ResponseKeys.ERROR, exception.getMessage()));
 	}
 
 	@ExceptionHandler(AuthenticationException.class)
@@ -157,6 +163,7 @@ public class AuthController
 	{
 		logger.info("AuthController: sign-in rejected - {}", exception.getMessage());
 
-		return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Invalid username or password"));
+		return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+				.body(Map.of(ResponseKeys.ERROR, Messages.INVALID_CREDENTIALS));
 	}
 }

@@ -1,6 +1,7 @@
 package lv.ray.springb.service.impl;
 
 import lv.ray.springb.config.AuthProperties;
+import lv.ray.springb.constants.ApiConstants.Messages;
 import lv.ray.springb.dto.RegistrationRequest;
 import lv.ray.springb.entity.AppUser;
 import lv.ray.springb.repository.AppUserRepository;
@@ -53,24 +54,24 @@ public class AppUserServiceImpl implements AppUserService
 		if (username.length() < authProperties.minUsernameLength())
 		{
 			throw new RegistrationException(
-					"Username must be at least " + authProperties.minUsernameLength() + " characters long");
+					String.format(Messages.USERNAME_TOO_SHORT, authProperties.minUsernameLength()));
 		}
 		if (!emailPattern.matcher(email).matches())
 		{
-			throw new RegistrationException("A valid email address is required");
+			throw new RegistrationException(Messages.INVALID_EMAIL);
 		}
 		if (password.length() < authProperties.minPasswordLength())
 		{
 			throw new RegistrationException(
-					"Password must be at least " + authProperties.minPasswordLength() + " characters long");
+					String.format(Messages.PASSWORD_TOO_SHORT, authProperties.minPasswordLength()));
 		}
 		if (appUserRepository.existsByUsername(username))
 		{
-			throw new RegistrationException("That username is already taken");
+			throw new RegistrationException(Messages.USERNAME_TAKEN);
 		}
 		if (appUserRepository.existsByEmail(email))
 		{
-			throw new RegistrationException("An account with that email already exists");
+			throw new RegistrationException(Messages.EMAIL_TAKEN);
 		}
 
 		final String displayName = trimmed(request.displayName()).isEmpty() ? username : trimmed(request.displayName());

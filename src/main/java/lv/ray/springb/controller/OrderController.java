@@ -1,5 +1,8 @@
 package lv.ray.springb.controller;
 
+import lv.ray.springb.constants.ApiConstants;
+import lv.ray.springb.constants.ApiConstants.Endpoints;
+import lv.ray.springb.constants.ApiConstants.SubPaths;
 import lv.ray.springb.dto.OrderDTO;
 import lv.ray.springb.entity.Order;
 import lv.ray.springb.service.OrderService;
@@ -11,8 +14,8 @@ import java.util.List;
 
 
 @RestController
-@RequestMapping("/api/orders")
-@CrossOrigin(origins = "*")
+@RequestMapping(Endpoints.ORDERS)
+@CrossOrigin(origins = ApiConstants.ALL_ORIGINS)
 public class OrderController
 {
 
@@ -29,7 +32,7 @@ public class OrderController
 		return orderService.getAllOrders();
 	}
 
-	@GetMapping("/{id}")
+	@GetMapping(SubPaths.BY_ID)
 	public ResponseEntity<OrderDTO> getOrderById(@PathVariable final Long id)
 	{
 		return orderService.getOrderById(id)
@@ -43,7 +46,7 @@ public class OrderController
 		return orderService.createOrder(order);
 	}
 
-	@DeleteMapping("/{id}")
+	@DeleteMapping(SubPaths.BY_ID)
 	public ResponseEntity<Void> deleteOrder(@PathVariable final Long id)
 	{
 		orderService.deleteOrder(id);

@@ -1,6 +1,7 @@
 package lv.ray.springb.security;
 
 import jakarta.annotation.Resource;
+import lv.ray.springb.constants.ApiConstants.Messages;
 import lv.ray.springb.entity.AppUser;
 import lv.ray.springb.repository.AppUserRepository;
 
@@ -28,7 +29,8 @@ public class AppUserDetailsService implements UserDetailsService
 	{
 		final AppUser user = appUserRepository.findByUsername(identifier)
 				.or(() -> appUserRepository.findByEmail(identifier.toLowerCase()))
-				.orElseThrow(() -> new UsernameNotFoundException("No account found for '" + identifier + "'"));
+				.orElseThrow(() -> new UsernameNotFoundException(
+						String.format(Messages.ACCOUNT_NOT_FOUND, identifier)));
 
 		return User.withUsername(user.getUsername())
 				.password(user.getPasswordHash())

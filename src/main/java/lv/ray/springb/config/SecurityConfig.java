@@ -1,5 +1,7 @@
 package lv.ray.springb.config;
 
+import lv.ray.springb.constants.ApiConstants.Endpoints;
+
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,7 +38,7 @@ public class SecurityConfig
 		http
 				.csrf(csrf -> csrf.disable())
 				.authorizeHttpRequests(auth -> auth
-						.requestMatchers("/api/auth/members").authenticated()
+						.requestMatchers(Endpoints.AUTH_MEMBERS).authenticated()
 						.anyRequest().permitAll()
 				)
 				.exceptionHandling(handling -> handling

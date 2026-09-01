@@ -1,5 +1,8 @@
 package lv.ray.springb.controller;
 
+import lv.ray.springb.constants.ApiConstants;
+import lv.ray.springb.constants.ApiConstants.Endpoints;
+import lv.ray.springb.constants.ApiConstants.SubPaths;
 import lv.ray.springb.entity.Customer;
 import lv.ray.springb.service.CustomerService;
 
@@ -10,8 +13,8 @@ import java.util.List;
 
 
 @RestController
-@RequestMapping("/api/customers")
-@CrossOrigin(origins = "*")
+@RequestMapping(Endpoints.CUSTOMERS)
+@CrossOrigin(origins = ApiConstants.ALL_ORIGINS)
 public class CustomerController
 {
 
@@ -28,7 +31,7 @@ public class CustomerController
 		return customerService.getAllCustomers();
 	}
 
-	@GetMapping("/{id}")
+	@GetMapping(SubPaths.BY_ID)
 	public ResponseEntity<Customer> getCustomerById(@PathVariable final Long id)
 	{
 		return customerService.getCustomerById(id)
@@ -42,7 +45,7 @@ public class CustomerController
 		return customerService.createCustomer(customer);
 	}
 
-	@PutMapping("/{id}")
+	@PutMapping(SubPaths.BY_ID)
 	public ResponseEntity<Customer> updateCustomer(@PathVariable final Long id, @RequestBody final Customer customerDetails)
 	{
 		return customerService.updateCustomer(id, customerDetails)
@@ -50,7 +53,7 @@ public class CustomerController
 				.orElse(ResponseEntity.notFound().build());
 	}
 
-	@DeleteMapping("/{id}")
+	@DeleteMapping(SubPaths.BY_ID)
 	public ResponseEntity<Void> deleteCustomer(@PathVariable final Long id)
 	{
 		customerService.deleteCustomer(id);
