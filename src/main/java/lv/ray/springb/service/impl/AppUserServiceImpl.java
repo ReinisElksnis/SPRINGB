@@ -1,12 +1,11 @@
 package lv.ray.springb.service.impl;
 
 import lv.ray.springb.config.AuthProperties;
-import lv.ray.springb.constants.ApiConstants.Messages;
 import lv.ray.springb.dto.RegistrationRequest;
 import lv.ray.springb.entity.AppUser;
 import lv.ray.springb.repository.AppUserRepository;
 import lv.ray.springb.service.AppUserService;
-import lv.ray.springb.service.RegistrationException;
+import lv.ray.springb.service.validation.RegistrationValidator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 
 @Service
@@ -31,17 +29,17 @@ public class AppUserServiceImpl implements AppUserService
 
 	private final AuthProperties authProperties;
 
-	private final Pattern emailPattern;
+	private final RegistrationValidator registrationValidator;
 
 	public AppUserServiceImpl(final AppUserRepository appUserRepository,
 			final PasswordEncoder passwordEncoder,
-			final AuthProperties authProperties)
+			final AuthProperties authProperties,
+			final RegistrationValidator registrationValidator)
 	{
 		this.appUserRepository = appUserRepository;
 		this.passwordEncoder = passwordEncoder;
 		this.authProperties = authProperties;
-		// Compiled once here so a malformed pattern fails the context startup, not a registration.
-		this.emailPattern = Pattern.compile(authProperties.emailPattern());
+		this.registrationValidator = registrationValidator;
 	}
 
 	@Override
@@ -51,28 +49,7 @@ public class AppUserServiceImpl implements AppUserService
 		final String email = trimmed(request.email()).toLowerCase();
 		final String password = request.password() == null ? "" : request.password();
 
-		if (username.length() < authProperties.minUsernameLength())
-		{
-			throw new RegistrationException(
-					String.format(Messages.USERNAME_TOO_SHORT, authProperties.minUsernameLength()));
-		}
-		if (!emailPattern.matcher(email).matches())
-		{
-			throw new RegistrationException(Messages.INVALID_EMAIL);
-		}
-		if (password.length() < authProperties.minPasswordLength())
-		{
-			throw new RegistrationException(
-					String.format(Messages.PASSWORD_TOO_SHORT, authProperties.minPasswordLength()));
-		}
-		if (appUserRepository.existsByUsername(username))
-		{
-			throw new RegistrationException(Messages.USERNAME_TAKEN);
-		}
-		if (appUserRepository.existsByEmail(email))
-		{
-			throw new RegistrationException(Messages.EMAIL_TAKEN);
-		}
+		registrationValidator.validate(username, email, password);
 
 		final String displayName = trimmed(request.displayName()).isEmpty() ? username : trimmed(request.displayName());
 		final AppUser user = new AppUser(username, email, passwordEncoder.encode(password), displayName);

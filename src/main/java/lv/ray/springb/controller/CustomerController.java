@@ -3,6 +3,7 @@ package lv.ray.springb.controller;
 import lv.ray.springb.constants.ApiConstants;
 import lv.ray.springb.constants.ApiConstants.Endpoints;
 import lv.ray.springb.constants.ApiConstants.SubPaths;
+import lv.ray.springb.dto.CustomerDTO;
 import lv.ray.springb.entity.Customer;
 import lv.ray.springb.service.CustomerService;
 
@@ -26,13 +27,13 @@ public class CustomerController
 	}
 
 	@GetMapping
-	public List<Customer> getAllCustomers()
+	public List<CustomerDTO> getAllCustomers()
 	{
 		return customerService.getAllCustomers();
 	}
 
 	@GetMapping(SubPaths.BY_ID)
-	public ResponseEntity<Customer> getCustomerById(@PathVariable final Long id)
+	public ResponseEntity<CustomerDTO> getCustomerById(@PathVariable final Long id)
 	{
 		return customerService.getCustomerById(id)
 				.map(ResponseEntity::ok)

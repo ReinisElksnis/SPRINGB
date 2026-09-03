@@ -1,5 +1,6 @@
 package lv.ray.springb.service;
 
+import lv.ray.springb.dto.CustomerDTO;
 import lv.ray.springb.entity.Customer;
 
 import java.util.List;
@@ -8,9 +9,9 @@ import java.util.Optional;
 
 public interface CustomerService
 {
-	List<Customer> getAllCustomers();
+	List<CustomerDTO> getAllCustomers();
 
-	Optional<Customer> getCustomerById(Long id);
+	Optional<CustomerDTO> getCustomerById(Long id);
 
 	Optional<Customer> getCustomerByEmail(String email);
 

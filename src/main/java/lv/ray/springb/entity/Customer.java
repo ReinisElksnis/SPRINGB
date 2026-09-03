@@ -28,6 +28,10 @@ public class Customer
 	@Column
 	private String phone;
 
+	@Enumerated(EnumType.STRING)
+	@Column(name = "customer_type", length = 20)
+	private CustomerType customerType;
+
 	@OneToMany(mappedBy = "customer", cascade = CascadeType.ALL, orphanRemoval = true)
 	@JsonIgnore
 	private List<Order> orders = new ArrayList<>();
@@ -82,6 +86,16 @@ public class Customer
 	public void setPhone(String phone)
 	{
 		this.phone = phone;
+	}
+
+	public CustomerType getCustomerType()
+	{
+		return customerType;
+	}
+
+	public void setCustomerType(CustomerType customerType)
+	{
+		this.customerType = customerType;
 	}
 
 	public List<Order> getOrders()

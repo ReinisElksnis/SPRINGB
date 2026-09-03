@@ -1,12 +1,17 @@
 -- Mock data for customers and orders
 
--- Insert customers
-INSERT INTO customers (name, email, phone) VALUES
-('John Doe', 'john.doe@example.com', '555-1234'),
-('Jane Smith', 'jane.smith@example.com', '555-5678'),
-('Bob Johnson', 'bob.johnson@example.com', '555-9012'),
-('Alice Williams', 'alice.williams@example.com', '555-3456'),
-('Charlie Brown', 'charlie.brown@example.com', '555-7890');
+-- Upsert customers (email is the natural key - re-running this script updates existing rows
+-- instead of failing on the unique constraint)
+INSERT INTO customers (name, email, phone, customer_type) VALUES
+('John Doe', 'john.doe@example.com', '555-1234', 'B2C'),
+('Jane Smith', 'jane.smith@example.com', '555-5678', 'B2B'),
+('Bob Johnson', 'bob.johnson@example.com', '555-9012', 'LEGACY'),
+('Alice Williams', 'alice.williams@example.com', '555-3456', NULL),
+('Charlie Brown', 'charlie.brown@example.com', '555-7890', 'B2C')
+ON CONFLICT (email) DO UPDATE SET
+	name = EXCLUDED.name,
+	phone = EXCLUDED.phone,
+	customer_type = EXCLUDED.customer_type;
 
 -- Insert orders
 INSERT INTO orders (customer_id, product, amount, order_date) VALUES
