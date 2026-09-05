@@ -40,6 +40,8 @@ public final class ApiConstants
 		 * both derive it from here so the two cannot drift apart.
 		 */
 		public static final String AUTH_MEMBERS = AUTH + SubPaths.MEMBERS;
+
+		public static final String ACCOUNTS = API + "/accounts";
 	}
 
 	/**
@@ -65,6 +67,14 @@ public final class ApiConstants
 		public static final String ME = "/me";
 
 		public static final String MEMBERS = "/members";
+
+		public static final String OPERATIONS = "/operations";
+
+		public static final String DEPOSITS = "/deposits";
+
+		public static final String WITHDRAWALS = "/withdrawals";
+
+		public static final String TRANSFERS = "/transfers";
 	}
 
 	/**
@@ -116,6 +126,25 @@ public final class ApiConstants
 		public static final String ACCOUNT_NOT_FOUND = "No account found for '%s'";
 
 		public static final String MEMBERS_ONLY = "Members-only content for %s";
+
+		/** Deliberately identical whether the id is unknown or simply belongs to someone else. */
+		public static final String FUNDS_ACCOUNT_NOT_FOUND = "No account found with id %d";
+
+		public static final String INVALID_AMOUNT = "Amount must be positive, with at most 2 decimal places";
+
+		public static final String INVALID_CURRENCY = "Currency must be a 3-letter ISO 4217 code";
+
+		public static final String INSUFFICIENT_FUNDS = "Account %d has insufficient funds for this operation";
+
+		public static final String CURRENCY_MISMATCH = "Accounts %d and %d do not share a currency";
+
+		public static final String SAME_ACCOUNT_TRANSFER = "Cannot transfer an account to itself";
+
+		public static final String IDEMPOTENCY_KEY_REQUIRED = "Idempotency-Key header is required for this operation";
+
+		/** A key match alone never proves a replay is legitimate - see IdempotencyRecord's Javadoc. */
+		public static final String IDEMPOTENCY_KEY_CONFLICT =
+				"Idempotency-Key was already used for a different request";
 	}
 
 	/**
@@ -129,5 +158,7 @@ public final class ApiConstants
 		}
 
 		public static final String GREETING_NAME = "World";
+
+		public static final String ACCOUNT_CURRENCY = "EUR";
 	}
 }

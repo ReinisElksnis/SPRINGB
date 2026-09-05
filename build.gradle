@@ -20,6 +20,10 @@ repositories {
 
 ext {
     set('springAiVersion', "2.0.1")
+    // Matches the version spring-boot-dependencies:4.1.1 itself manages (testcontainers-bom is a
+    // nested BOM import there, which the Gradle dependency-management plugin doesn't follow
+    // transitively) - bump this alongside the Spring Boot version.
+    set('testcontainersVersion', "2.0.5")
 }
 
 dependencies {
@@ -42,12 +46,16 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-session-jdbc-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 dependencyManagement {
     imports {
         mavenBom "org.springframework.ai:spring-ai-bom:${springAiVersion}"
+        mavenBom "org.testcontainers:testcontainers-bom:${testcontainersVersion}"
     }
 }
 

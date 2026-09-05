@@ -17,7 +17,6 @@ import java.util.Optional;
 
 
 @Service
-@Transactional
 public class AppUserServiceImpl implements AppUserService
 {
 
@@ -43,6 +42,7 @@ public class AppUserServiceImpl implements AppUserService
 	}
 
 	@Override
+	@Transactional
 	public AppUser register(final RegistrationRequest request)
 	{
 		final String username = trimmed(request.username());
@@ -61,7 +61,6 @@ public class AppUserServiceImpl implements AppUserService
 	}
 
 	@Override
-	@Transactional(readOnly = true)
 	public Optional<AppUser> getByUsername(final String username)
 	{
 		return appUserRepository.findByUsername(username);

@@ -7,7 +7,7 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 600px;
+            max-width: 900px;
             margin: 50px auto;
             padding: 20px;
             background-color: #f5f5f5;
@@ -149,6 +149,81 @@
         #membersResponse.error {
             border-left-color: #f44336;
         }
+        .toolbar {
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+        .toolbar > div {
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar label {
+            font-size: 12px;
+            color: #555;
+            margin-bottom: 4px;
+        }
+        .toolbar input, .toolbar select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: auto;
+            margin: 0;
+        }
+        .toolbar button {
+            padding: 9px 16px;
+            font-size: 14px;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            font-size: 12px;
+            margin: 2px 4px 2px 0;
+        }
+        .error-text {
+            color: #f44336;
+            margin-top: 10px;
+        }
+        .success-text {
+            color: #2e7d32;
+            margin-top: 10px;
+        }
+        .subsection {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px dashed #ddd;
+        }
+        .subsection h3 {
+            margin-bottom: 5px;
+        }
+        .op-type {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+        }
+        .op-DEPOSIT, .op-TRANSFER_IN {
+            background-color: #4CAF50;
+        }
+        .op-WITHDRAWAL, .op-TRANSFER_OUT {
+            background-color: #f44336;
+        }
+        #accountsTable, #moneyModal, #ledgerModal {
+            display: none;
+        }
+        #moneyModal, #ledgerModal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.4);
+        }
     </style>
 </head>
 <body>
@@ -185,6 +260,61 @@
             </div>
         </div>
         <div class="section">
+            <h2>Accounts</h2>
+            <p>Create accounts, deposit, withdraw and transfer money, and inspect the ledger behind
+               each balance. Requires a signed-in session.</p>
+
+            <div id="accountsSignedOut" style="display: none;">
+                <p><a href="/login.html">Sign in</a> or <a href="/register.html">register</a> to manage accounts.</p>
+            </div>
+
+            <div id="accountsSignedIn" style="display: none;">
+                <div class="toolbar">
+                    <div>
+                        <label for="newAccountCurrency">New account currency</label>
+                        <input type="text" id="newAccountCurrency" value="EUR" maxlength="3" style="width: 70px; text-transform: uppercase;">
+                    </div>
+                    <button onclick="createAccount()">Create Account</button>
+                    <button onclick="loadAccounts()">Refresh</button>
+                </div>
+                <div id="accountsError" class="error-text" style="display: none;"></div>
+
+                <table id="accountsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Currency</th>
+                            <th>Balance</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accountsBody"></tbody>
+                </table>
+                <p id="noAccountsMessage" style="display: none; color: #777;">No accounts yet &mdash; create one above.</p>
+
+                <div class="subsection">
+                    <h3>Transfer between accounts</h3>
+                    <div class="toolbar">
+                        <div>
+                            <label for="transferFrom">From (yours)</label>
+                            <select id="transferFrom"></select>
+                        </div>
+                        <div>
+                            <label for="transferTo">To (account id)</label>
+                            <input type="number" id="transferTo" style="width: 90px;">
+                        </div>
+                        <div>
+                            <label for="transferAmount">Amount</label>
+                            <input type="number" id="transferAmount" min="0.01" step="0.01" style="width: 100px;">
+                        </div>
+                        <button onclick="submitTransfer()">Transfer</button>
+                    </div>
+                    <div id="transferResult"></div>
+                </div>
+            </div>
+        </div>
+        <div class="section">
             <h2>Members Only</h2>
             <p>This endpoint is the one part of the demo that requires a signed-in session &mdash;
                it answers <code>401</code> to anonymous visitors.</p>
@@ -200,6 +330,38 @@
             <span class="close" onclick="closeCustomerModal()">&times;</span>
             <h2>Customer Details</h2>
             <div id="customerDetails"></div>
+        </div>
+    </div>
+
+    <!-- Deposit / Withdraw Modal -->
+    <div id="moneyModal">
+        <div class="modal-content">
+            <span class="close" onclick="closeMoneyModal()">&times;</span>
+            <h2 id="moneyModalTitle">Deposit</h2>
+            <label for="moneyAmount">Amount</label>
+            <input type="number" id="moneyAmount" min="0.01" step="0.01">
+            <button onclick="submitMoneyOperation()">Submit</button>
+            <div id="moneyModalResult"></div>
+        </div>
+    </div>
+
+    <!-- Ledger Modal -->
+    <div id="ledgerModal">
+        <div class="modal-content" style="max-width: 650px;">
+            <span class="close" onclick="closeLedgerModal()">&times;</span>
+            <h2>Ledger &mdash; Account <span id="ledgerAccountId"></span></h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Balance After</th>
+                        <th>Transfer Group</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="ledgerBody"></tbody>
+            </table>
         </div>
     </div>
 
@@ -295,14 +457,254 @@
 
         // Close modal when clicking outside of it
         window.onclick = function(event) {
-            const modal = document.getElementById('customerModal');
-            if (event.target === modal) {
-                modal.style.display = 'none';
+            ['customerModal', 'moneyModal', 'ledgerModal'].forEach(id => {
+                const modal = document.getElementById(id);
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        }
+
+        // --- Accounts ---
+
+        let myAccounts = [];
+        let moneyModalContext = { accountId: null, type: null };
+
+        function generateIdempotencyKey() {
+            if (window.crypto && crypto.randomUUID) {
+                return crypto.randomUUID();
+            }
+            return 'key-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+        }
+
+        async function parseErrorMessage(response) {
+            try {
+                const data = await response.json();
+                return data.error || data.message || `Request failed (HTTP ${response.status})`;
+            } catch (e) {
+                return `Request failed (HTTP ${response.status})`;
+            }
+        }
+
+        async function loadAccounts() {
+            const errorDiv = document.getElementById('accountsError');
+            errorDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/accounts');
+                if (!response.ok) {
+                    errorDiv.textContent = await parseErrorMessage(response);
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                myAccounts = await response.json();
+                renderAccounts();
+            } catch (error) {
+                errorDiv.textContent = 'Error loading accounts: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function renderAccounts() {
+            const table = document.getElementById('accountsTable');
+            const body = document.getElementById('accountsBody');
+            const noAccountsMessage = document.getElementById('noAccountsMessage');
+            const fromSelect = document.getElementById('transferFrom');
+
+            body.innerHTML = '';
+            fromSelect.innerHTML = '';
+
+            if (myAccounts.length === 0) {
+                table.style.display = 'none';
+                noAccountsMessage.style.display = 'block';
+                fromSelect.innerHTML = '<option value="">No accounts yet</option>';
+                return;
+            }
+
+            myAccounts.forEach(account => {
+                const row = document.createElement('tr');
+                const created = new Date(account.createdAt).toLocaleString();
+                row.innerHTML = `
+                    <td>${account.id}</td>
+                    <td>${account.currency}</td>
+                    <td>${account.balance.toFixed(2)}</td>
+                    <td>${created}</td>
+                    <td>
+                        <button class="action-btn" onclick="openMoneyModal(${account.id}, 'deposits')">Deposit</button>
+                        <button class="action-btn" onclick="openMoneyModal(${account.id}, 'withdrawals')">Withdraw</button>
+                        <button class="action-btn" onclick="openLedger(${account.id})">Ledger</button>
+                    </td>
+                `;
+                body.appendChild(row);
+
+                const option = document.createElement('option');
+                option.value = account.id;
+                option.textContent = `#${account.id} (${account.currency}, ${account.balance.toFixed(2)})`;
+                fromSelect.appendChild(option);
+            });
+
+            noAccountsMessage.style.display = 'none';
+            table.style.display = 'table';
+        }
+
+        async function createAccount() {
+            const errorDiv = document.getElementById('accountsError');
+            errorDiv.style.display = 'none';
+            const currency = document.getElementById('newAccountCurrency').value.trim().toUpperCase() || 'EUR';
+
+            try {
+                const response = await fetch('/api/accounts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currency })
+                });
+                if (!response.ok) {
+                    errorDiv.textContent = await parseErrorMessage(response);
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+                await loadAccounts();
+            } catch (error) {
+                errorDiv.textContent = 'Error creating account: ' + error.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function openMoneyModal(accountId, type) {
+            moneyModalContext = { accountId, type };
+            document.getElementById('moneyModalTitle').textContent =
+                (type === 'deposits' ? 'Deposit into' : 'Withdraw from') + ' Account #' + accountId;
+            document.getElementById('moneyAmount').value = '';
+            document.getElementById('moneyModalResult').innerHTML = '';
+            document.getElementById('moneyModal').style.display = 'block';
+        }
+
+        function closeMoneyModal() {
+            document.getElementById('moneyModal').style.display = 'none';
+        }
+
+        async function submitMoneyOperation() {
+            const resultDiv = document.getElementById('moneyModalResult');
+            const amount = parseFloat(document.getElementById('moneyAmount').value);
+            resultDiv.innerHTML = '';
+
+            if (isNaN(amount) || amount <= 0) {
+                resultDiv.innerHTML = '<p class="error-text">Enter a positive amount.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    `/api/accounts/${moneyModalContext.accountId}/${moneyModalContext.type}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Idempotency-Key': generateIdempotencyKey()
+                    },
+                    body: JSON.stringify({ amount })
+                });
+
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<p class="error-text">${await parseErrorMessage(response)}</p>`;
+                    return;
+                }
+
+                const operation = await response.json();
+                resultDiv.innerHTML = `<p class="success-text">${operation.type} of
+                    ${operation.amount.toFixed(2)} recorded. New balance: ${operation.balanceAfter.toFixed(2)}</p>`;
+                await loadAccounts();
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error-text">Error: ${error.message}</p>`;
+            }
+        }
+
+        async function openLedger(accountId) {
+            document.getElementById('ledgerAccountId').textContent = accountId;
+            const body = document.getElementById('ledgerBody');
+            body.innerHTML = '<tr><td colspan="5" style="text-align: center;">Loading...</td></tr>';
+            document.getElementById('ledgerModal').style.display = 'block';
+
+            try {
+                const response = await fetch(`/api/accounts/${accountId}/operations`);
+                if (!response.ok) {
+                    body.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">
+                        ${await parseErrorMessage(response)}</td></tr>`;
+                    return;
+                }
+                const operations = await response.json();
+                if (operations.length === 0) {
+                    body.innerHTML = '<tr><td colspan="5" style="text-align: center;">No operations yet</td></tr>';
+                    return;
+                }
+                body.innerHTML = operations.map(op => `
+                    <tr>
+                        <td><span class="op-type op-${op.type}">${op.type}</span></td>
+                        <td>${op.amount.toFixed(2)}</td>
+                        <td>${op.balanceAfter.toFixed(2)}</td>
+                        <td>${op.transferGroupId ? op.transferGroupId.substring(0, 8) + '&hellip;' : '-'}</td>
+                        <td>${new Date(op.createdAt).toLocaleString()}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                body.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">
+                    Error: ${error.message}</td></tr>`;
+            }
+        }
+
+        function closeLedgerModal() {
+            document.getElementById('ledgerModal').style.display = 'none';
+        }
+
+        async function submitTransfer() {
+            const resultDiv = document.getElementById('transferResult');
+            const fromAccountId = parseInt(document.getElementById('transferFrom').value, 10);
+            const toAccountId = parseInt(document.getElementById('transferTo').value, 10);
+            const amount = parseFloat(document.getElementById('transferAmount').value);
+            resultDiv.innerHTML = '';
+
+            if (!fromAccountId) {
+                resultDiv.innerHTML = '<p class="error-text">You need at least one account to transfer from.</p>';
+                return;
+            }
+            if (!toAccountId) {
+                resultDiv.innerHTML = '<p class="error-text">Enter a destination account id.</p>';
+                return;
+            }
+            if (isNaN(amount) || amount <= 0) {
+                resultDiv.innerHTML = '<p class="error-text">Enter a positive amount.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/accounts/transfers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Idempotency-Key': generateIdempotencyKey()
+                    },
+                    body: JSON.stringify({ fromAccountId, toAccountId, amount })
+                });
+
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<p class="error-text">${await parseErrorMessage(response)}</p>`;
+                    return;
+                }
+
+                const result = await response.json();
+                resultDiv.innerHTML = `<p class="success-text">Transferred
+                    ${result.debit.amount.toFixed(2)} from #${fromAccountId} to #${toAccountId}.</p>`;
+                document.getElementById('transferTo').value = '';
+                document.getElementById('transferAmount').value = '';
+                await loadAccounts();
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error-text">Error: ${error.message}</p>`;
             }
         }
 
         async function refreshAuthBar() {
             const authBar = document.getElementById('authBar');
+            const accountsSignedIn = document.getElementById('accountsSignedIn');
+            const accountsSignedOut = document.getElementById('accountsSignedOut');
 
             try {
                 const response = await fetch('/api/auth/me');
@@ -314,11 +716,16 @@
                         <span>Signed in as <strong>${user.displayName || user.username}</strong> (${user.email})</span>
                         <button onclick="logout()">Sign Out</button>
                     `;
+                    accountsSignedIn.style.display = 'block';
+                    accountsSignedOut.style.display = 'none';
+                    loadAccounts();
                 } else {
                     authBar.innerHTML = `
                         <span>You are browsing as a guest.</span>
                         <span><a href="/login.html">Sign in</a> &middot; <a href="/register.html">Register</a></span>
                     `;
+                    accountsSignedIn.style.display = 'none';
+                    accountsSignedOut.style.display = 'block';
                 }
             } catch (error) {
                 authBar.innerHTML = `<span style="color: red;">Could not load sign-in status: ${error.message}</span>`;

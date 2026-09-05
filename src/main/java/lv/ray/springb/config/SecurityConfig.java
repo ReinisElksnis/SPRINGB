@@ -39,6 +39,7 @@ public class SecurityConfig
 				.csrf(csrf -> csrf.disable())
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(Endpoints.AUTH_MEMBERS).authenticated()
+						.requestMatchers(Endpoints.ACCOUNTS, Endpoints.ACCOUNTS + "/**").authenticated()
 						.anyRequest().permitAll()
 				)
 				.exceptionHandling(handling -> handling
