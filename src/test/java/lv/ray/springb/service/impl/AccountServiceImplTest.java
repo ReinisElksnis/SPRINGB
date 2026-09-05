@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
@@ -279,7 +280,7 @@ class AccountServiceImplTest
 		final Operation credit = operation(2L, OperationType.TRANSFER_IN, "30.00", "30.00", "group-1");
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-3")).thenReturn(Optional.empty());
 		when(mutationExecutor.transferOnce(10L, 20L, ALICE, new BigDecimal("30.00"), "key-3"))
-				.thenReturn(new Operation[] { debit, credit });
+				.thenReturn(Pair.of(debit, credit));
 
 		final TransferResultDTO result = accountService.transfer(10L, 20L, ALICE, new BigDecimal("30.00"), "key-3");
 

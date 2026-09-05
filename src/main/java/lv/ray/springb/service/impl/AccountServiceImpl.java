@@ -19,6 +19,7 @@ import lv.ray.springb.service.AccountService;
 import lv.ray.springb.service.validation.AccountOperationValidator;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -174,9 +175,9 @@ public class AccountServiceImpl implements AccountService
 
 		try
 		{
-			final Operation[] legs = mutationExecutor.transferOnce(fromAccountId, toAccountId, ownerUsername, amount,
-					idempotencyKey);
-			return new TransferResultDTO(new OperationDTO(legs[0]), new OperationDTO(legs[1]));
+			final Pair<Operation, Operation> legs = mutationExecutor.transferOnce(fromAccountId, toAccountId,
+					ownerUsername, amount, idempotencyKey);
+			return new TransferResultDTO(new OperationDTO(legs.getFirst()), new OperationDTO(legs.getSecond()));
 		}
 		catch (final DataIntegrityViolationException lostIdempotencyRace)
 		{

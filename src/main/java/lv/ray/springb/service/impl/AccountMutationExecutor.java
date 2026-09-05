@@ -11,6 +11,7 @@ import lv.ray.springb.repository.OperationRepository;
 import lv.ray.springb.service.AccountException;
 import lv.ray.springb.service.validation.AccountOperationValidator;
 
+import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -93,8 +94,8 @@ public class AccountMutationExecutor
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
-	public Operation[] transferOnce(final Long fromAccountId, final Long toAccountId, final String ownerUsername,
-			final BigDecimal amount, final String idempotencyKey)
+	public Pair<Operation, Operation> transferOnce(final Long fromAccountId, final Long toAccountId,
+			final String ownerUsername, final BigDecimal amount, final String idempotencyKey)
 	{
 		// Always lock in the same global order, regardless of transfer direction, so two
 		// concurrent transfers between the same pair of accounts can never deadlock on each
@@ -120,7 +121,7 @@ public class AccountMutationExecutor
 				new Operation(to, OperationType.TRANSFER_IN, amount, to.getBalance(), transferGroupId));
 
 		claimKey(idempotencyKey, ownerUsername, null, transferGroupId);
-		return new Operation[] { debit, credit };
+		return Pair.of(debit, credit);
 	}
 
 	private Account lock(final Long accountId)
