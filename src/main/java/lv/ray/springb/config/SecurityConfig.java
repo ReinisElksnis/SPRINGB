@@ -20,6 +20,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
 
 
 @Configuration
@@ -36,12 +38,20 @@ public class SecurityConfig
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception
 	{
 		http
-				.csrf(csrf -> csrf.disable())
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(Endpoints.AUTH_MEMBERS).authenticated()
 						.requestMatchers(Endpoints.ACCOUNTS, Endpoints.ACCOUNTS + "/**").authenticated()
 						.anyRequest().permitAll()
 				)
+				// Session-cookie auth (see securityContextRepository()) is what makes this app CSRF-vulnerable
+				// in the first place, so this stays enabled. CookieCsrfTokenRepository is the SPA-friendly
+				// choice - static/index.html reads the XSRF-TOKEN cookie and echoes it back as a header on
+				// every mutating request, instead of a server-rendered form field.
+				.csrf(csrf -> csrf
+						.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+						.csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
+				)
+				.addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
 				.exceptionHandling(handling -> handling
 						.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
 				)

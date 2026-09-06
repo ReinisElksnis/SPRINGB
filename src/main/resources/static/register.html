@@ -113,6 +113,10 @@
     </div>
 
     <script>
+        function csrfToken() {
+            return document.cookie.split('; ').find(row => row.startsWith('XSRF-TOKEN='))?.split('=')[1];
+        }
+
         const form = document.getElementById('registerForm');
         const messageDiv = document.getElementById('message');
         const submitButton = document.getElementById('submitButton');
@@ -137,7 +141,7 @@
             try {
                 const response = await fetch('/api/auth/register', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': csrfToken() },
                     body: JSON.stringify({
                         username: document.getElementById('username').value,
                         email: document.getElementById('email').value,
