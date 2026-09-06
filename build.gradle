@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'jvm-test-suite'
     id 'jacoco'
     id 'checkstyle'
     id 'org.springframework.boot' version '4.1.1'
@@ -41,17 +42,6 @@ dependencies {
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     runtimeOnly 'org.postgresql:postgresql'
     annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
-    testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-data-rest-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-kafka-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-security-oauth2-client-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-session-jdbc-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
-    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
-    testImplementation 'org.testcontainers:testcontainers-postgresql'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 dependencyManagement {
@@ -61,8 +51,49 @@ dependencyManagement {
     }
 }
 
-tasks.named('test') {
-    useJUnitPlatform()
+// Two tiers, kept on separate source sets so the fast one stays fast: `test` is plain JUnit 5 +
+// Mockito + AssertJ (all pulled in transitively by spring-boot-starter-test) with every
+// collaborator mocked - no Spring context, no database, milliseconds per test. `integrationTest`
+// boots the real application context against a real Testcontainers Postgres (and, for the web
+// layer tests, drives it through the real Spring Security filter chain via MockMvc) - seconds per
+// test, but the only tier that can catch a broken transaction boundary or a misconfigured security
+// filter chain. See src/test/java vs src/integrationTest/java.
+testing {
+    suites {
+        test {
+            useJUnitJupiter()
+
+            dependencies {
+                implementation 'org.springframework.boot:spring-boot-starter-test'
+            }
+        }
+
+        integrationTest(JvmTestSuite) {
+            useJUnitJupiter()
+
+            dependencies {
+                implementation project()
+                implementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+                implementation 'org.springframework.boot:spring-boot-starter-data-rest-test'
+                implementation 'org.springframework.boot:spring-boot-starter-kafka-test'
+                implementation 'org.springframework.boot:spring-boot-starter-security-oauth2-client-test'
+                implementation 'org.springframework.boot:spring-boot-starter-security-test'
+                implementation 'org.springframework.boot:spring-boot-starter-session-jdbc-test'
+                implementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+                implementation 'org.springframework.boot:spring-boot-testcontainers'
+                implementation 'org.testcontainers:testcontainers-junit-jupiter'
+                implementation 'org.testcontainers:testcontainers-postgresql'
+            }
+
+            targets {
+                all {
+                    testTask.configure {
+                        shouldRunAfter(tasks.test)
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Reports style issues without failing the build - this codebase predates the ruleset (tabs,
@@ -81,7 +112,8 @@ jacoco {
 }
 
 tasks.named('jacocoTestReport') {
-    dependsOn tasks.named('test')
+    dependsOn tasks.named('test'), tasks.named('integrationTest')
+    executionData tasks.named('test').get(), tasks.named('integrationTest').get()
     reports {
         xml.required = true
         html.required = true
