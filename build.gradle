@@ -75,7 +75,9 @@ checkstyle {
 }
 
 jacoco {
-    toolVersion = '0.8.12'
+    // 0.8.12 can't instrument Java 25 bytecode (class file major version 69) - official Java 25
+    // support landed in 0.8.14.
+    toolVersion = '0.8.15'
 }
 
 tasks.named('jacocoTestReport') {
