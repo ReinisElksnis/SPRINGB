@@ -284,8 +284,8 @@ class AccountServiceImplTest
 
 		final TransferResultDTO result = accountService.transfer(10L, 20L, ALICE, new BigDecimal("30.00"), "key-3");
 
-		assertThat(result.getDebit().getId()).isEqualTo(1L);
-		assertThat(result.getCredit().getId()).isEqualTo(2L);
+		assertThat(result.debit().getId()).isEqualTo(1L);
+		assertThat(result.credit().getId()).isEqualTo(2L);
 	}
 
 	@Test
@@ -311,7 +311,7 @@ class AccountServiceImplTest
 
 		final TransferResultDTO result = accountService.transfer(10L, 20L, ALICE, new BigDecimal("30.00"), "key-3");
 
-		assertThat(result.getDebit().getTransferGroupId()).isEqualTo("group-1");
+		assertThat(result.debit().getTransferGroupId()).isEqualTo("group-1");
 		verify(mutationExecutor, never()).transferOnce(any(), any(), any(), any(), any());
 	}
 
