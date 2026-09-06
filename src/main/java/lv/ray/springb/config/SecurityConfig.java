@@ -36,7 +36,6 @@ public class SecurityConfig
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception
 	{
 		http
-				.csrf(csrf -> csrf.disable())
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(Endpoints.AUTH_MEMBERS).authenticated()
 						.requestMatchers(Endpoints.ACCOUNTS, Endpoints.ACCOUNTS + "/**").authenticated()
