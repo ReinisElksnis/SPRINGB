@@ -1,5 +1,7 @@
 plugins {
     id 'java'
+    id 'jacoco'
+    id 'checkstyle'
     id 'org.springframework.boot' version '4.1.1'
     id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -61,4 +63,29 @@ dependencyManagement {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+// Reports style issues without failing the build - this codebase predates the ruleset (tabs,
+// Allman braces, star imports are all intentional here), so it's a signal for new code, not a gate.
+checkstyle {
+    toolVersion = '10.20.2'
+    configFile = file('config/checkstyle/checkstyle.xml')
+    ignoreFailures = true
+    maxWarnings = Integer.MAX_VALUE
+}
+
+jacoco {
+    toolVersion = '0.8.12'
+}
+
+tasks.named('jacocoTestReport') {
+    dependsOn tasks.named('test')
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('jacocoTestReport')
 }
