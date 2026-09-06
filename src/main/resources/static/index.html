@@ -366,6 +366,10 @@
     </div>
 
     <script>
+        function csrfToken() {
+            return document.cookie.split('; ').find(row => row.startsWith('XSRF-TOKEN='))?.split('=')[1];
+        }
+
         async function fetchGreeting() {
             const name = document.getElementById('nameInput').value || 'World';
             const responseDiv = document.getElementById('response');
@@ -555,7 +559,7 @@
             try {
                 const response = await fetch('/api/accounts', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': csrfToken() },
                     body: JSON.stringify({ currency })
                 });
                 if (!response.ok) {
@@ -599,7 +603,8 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Idempotency-Key': generateIdempotencyKey()
+                        'Idempotency-Key': generateIdempotencyKey(),
+                        'X-XSRF-TOKEN': csrfToken()
                     },
                     body: JSON.stringify({ amount })
                 });
@@ -680,7 +685,8 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Idempotency-Key': generateIdempotencyKey()
+                        'Idempotency-Key': generateIdempotencyKey(),
+                        'X-XSRF-TOKEN': csrfToken()
                     },
                     body: JSON.stringify({ fromAccountId, toAccountId, amount })
                 });
@@ -733,7 +739,7 @@
         }
 
         async function logout() {
-            await fetch('/api/auth/logout', { method: 'POST' });
+            await fetch('/api/auth/logout', { method: 'POST', headers: { 'X-XSRF-TOKEN': csrfToken() } });
             document.getElementById('membersResponse').style.display = 'none';
             refreshAuthBar();
         }
