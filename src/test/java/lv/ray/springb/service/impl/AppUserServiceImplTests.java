@@ -31,7 +31,7 @@ import static org.mockito.Mockito.when;
  * transactions and locking against Testcontainers Postgres.
  */
 @ExtendWith(MockitoExtension.class)
-class AppUserServiceImplTest
+class AppUserServiceImplTests
 {
 
 	private static final AuthProperties AUTH_PROPERTIES =

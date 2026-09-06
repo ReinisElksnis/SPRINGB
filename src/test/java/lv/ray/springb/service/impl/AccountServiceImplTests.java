@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
  * Postgres via Testcontainers.
  */
 @ExtendWith(MockitoExtension.class)
-class AccountServiceImplTest
+class AccountServiceImplTests
 {
 
 	private static final String ALICE = "alice";

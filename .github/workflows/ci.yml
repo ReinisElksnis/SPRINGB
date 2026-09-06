@@ -25,18 +25,29 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # Runs compile, unit/integration tests (Testcontainers spins up a real Postgres via the
-      # Docker daemon this runner already has), Checkstyle (report-only, see build.gradle) and
-      # the Jacoco coverage report - all wired into the standard `check` lifecycle task.
-      - name: Build and verify
+      # Fast tier first: no Spring context, no Docker - fails in seconds if it's going to fail.
+      - name: Run unit tests
+        run: ./gradlew test
+
+      # Slower tier + Checkstyle (report-only, see build.gradle) + the aggregated Jacoco coverage
+      # report (both tiers' exec data) - all wired into the standard `check` lifecycle task.
+      # Testcontainers spins up a real Postgres via the Docker daemon this runner already has.
+      - name: Build and verify (integration tests, Checkstyle, coverage)
         run: ./gradlew build
 
-      - name: Upload test results
+      - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: unit-test-results
           path: build/reports/tests/test/
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: build/reports/tests/integrationTest/
 
       - name: Upload Checkstyle report
         if: always()
