@@ -8,17 +8,24 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.util.regex.Pattern;
+import java.util.Currency;
 
 
 @Component
 public class AccountOperationValidator
 {
-	private static final Pattern CURRENCY_PATTERN = Pattern.compile("^[A-Z]{3}$");
+	/**
+	 * No live ISO 4217 currency has more minor units than this (KWD/BHD/OMR/JOD/TND use 3 - the
+	 * most of any currency still in circulation). This is deliberately looser than any single
+	 * currency's real precision: it is the cheap, currency-agnostic filter that runs before an
+	 * account (and therefore a currency) is even known - {@link #validateAmountScale} is the
+	 * precise, per-currency check that runs once it is.
+	 */
+	private static final int MAX_POSSIBLE_MINOR_UNITS = 3;
 
 	public void validateCurrency(final String currency)
 	{
-		if (currency == null || !CURRENCY_PATTERN.matcher(currency).matches())
+		if (currency == null || !isRealIsoCurrency(currency))
 		{
 			throw new AccountException(HttpStatus.BAD_REQUEST, Messages.INVALID_CURRENCY);
 		}
@@ -26,9 +33,39 @@ public class AccountOperationValidator
 
 	public void validateAmount(final BigDecimal amount)
 	{
-		if (amount == null || amount.scale() > 2 || amount.compareTo(BigDecimal.ZERO) <= 0)
+		if (amount == null || amount.scale() > MAX_POSSIBLE_MINOR_UNITS || amount.compareTo(BigDecimal.ZERO) <= 0)
 		{
 			throw new AccountException(HttpStatus.BAD_REQUEST, Messages.INVALID_AMOUNT);
+		}
+	}
+
+	/**
+	 * ISO 4217 defines a minor-unit count per currency, not a universal one - JPY has none (never
+	 * a fractional yen), EUR/USD have 2, KWD/BHD/OMR have 3. A single account/transfer is always
+	 * one specific currency by the time this runs (after the account is loaded), so this is the
+	 * check that actually enforces the right precision, rather than {@link #validateAmount}'s
+	 * looser upper bound that has to work for every currency at once.
+	 */
+	public void validateAmountScale(final BigDecimal amount, final String currency)
+	{
+		final int allowedScale = Math.max(0, Currency.getInstance(currency).getDefaultFractionDigits());
+		if (amount.scale() > allowedScale)
+		{
+			throw new AccountException(HttpStatus.BAD_REQUEST,
+					String.format(Messages.INVALID_AMOUNT_FOR_CURRENCY, currency, allowedScale));
+		}
+	}
+
+	private static boolean isRealIsoCurrency(final String currency)
+	{
+		try
+		{
+			Currency.getInstance(currency);
+			return true;
+		}
+		catch (final IllegalArgumentException notARealCurrency)
+		{
+			return false;
 		}
 	}
 

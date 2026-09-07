@@ -34,7 +34,9 @@ public class Account
 	@Column(nullable = false, length = 3)
 	private String currency;
 
-	@Column(nullable = false, precision = 19, scale = 2)
+	/** Scale 3, not 2 - some real currencies (KWD, BHD, OMR...) have 3 minor units; see
+	 * {@code AccountOperationValidator.validateAmountScale}. */
+	@Column(nullable = false, precision = 19, scale = 3)
 	private BigDecimal balance = BigDecimal.ZERO;
 
 	@Column(name = "created_at", nullable = false)

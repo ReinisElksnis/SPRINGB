@@ -31,14 +31,15 @@ public class Operation
 
 	/**
 	 * Always positive - direction is carried by {@link #type}, never by the sign of this value.
+	 * Scale 3, matching {@link Account#getBalance()} - see that field's Javadoc.
 	 */
-	@Column(nullable = false, precision = 19, scale = 2)
+	@Column(nullable = false, precision = 19, scale = 3)
 	private BigDecimal amount;
 
 	/**
 	 * Snapshot of {@link Account#getBalance()} immediately after this entry was applied.
 	 */
-	@Column(name = "balance_after", nullable = false, precision = 19, scale = 2)
+	@Column(name = "balance_after", nullable = false, precision = 19, scale = 3)
 	private BigDecimal balanceAfter;
 
 	/**
