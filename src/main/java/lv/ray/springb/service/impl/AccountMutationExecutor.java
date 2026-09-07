@@ -68,6 +68,7 @@ public class AccountMutationExecutor
 	{
 		final Account account = lock(accountId);
 		validator.validateOwnership(account, ownerUsername);
+		validator.validateAmountScale(amount, account.getCurrency());
 
 		account.setBalance(account.getBalance().add(amount));
 		final Operation operation = operationRepository.save(
@@ -83,6 +84,7 @@ public class AccountMutationExecutor
 	{
 		final Account account = lock(accountId);
 		validator.validateOwnership(account, ownerUsername);
+		validator.validateAmountScale(amount, account.getCurrency());
 		validator.validateSufficientFunds(account, amount);
 
 		account.setBalance(account.getBalance().subtract(amount));
@@ -109,6 +111,7 @@ public class AccountMutationExecutor
 		validator.validateOwnership(from, ownerUsername);
 		validator.validateSufficientFunds(from, amount);
 		validator.validateSameCurrency(from, to);
+		validator.validateAmountScale(amount, from.getCurrency());
 
 		final String transferGroupId = UUID.randomUUID().toString();
 

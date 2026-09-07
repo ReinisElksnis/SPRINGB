@@ -132,9 +132,12 @@ public final class ApiConstants
 		/** Deliberately identical whether the id is unknown or simply belongs to someone else. */
 		public static final String FUNDS_ACCOUNT_NOT_FOUND = "No account found with id %d";
 
-		public static final String INVALID_AMOUNT = "Amount must be positive, with at most 2 decimal places";
+		/** The coarse, currency-agnostic check - {@link #INVALID_AMOUNT_FOR_CURRENCY} is the precise one. */
+		public static final String INVALID_AMOUNT = "Amount must be positive, with at most 3 decimal places";
 
-		public static final String INVALID_CURRENCY = "Currency must be a 3-letter ISO 4217 code";
+		public static final String INVALID_AMOUNT_FOR_CURRENCY = "%s allows at most %d decimal place(s)";
+
+		public static final String INVALID_CURRENCY = "Currency must be a real ISO 4217 code";
 
 		public static final String INSUFFICIENT_FUNDS = "Account %d has insufficient funds for this operation";
 
