@@ -212,10 +212,10 @@
         .op-WITHDRAWAL, .op-TRANSFER_OUT {
             background-color: #f44336;
         }
-        #accountsTable, #moneyModal, #ledgerModal {
+        #accountsTable, #moneyModal, #ledgerModal, #reconcileModal {
             display: none;
         }
-        #moneyModal, #ledgerModal {
+        #moneyModal, #ledgerModal, #reconcileModal {
             position: fixed;
             z-index: 1000;
             left: 0;
@@ -365,6 +365,15 @@
         </div>
     </div>
 
+    <!-- Reconcile Modal -->
+    <div id="reconcileModal">
+        <div class="modal-content" style="max-width: 550px;">
+            <span class="close" onclick="closeReconcileModal()">&times;</span>
+            <h2>Reconciliation &mdash; Account <span id="reconcileAccountId"></span></h2>
+            <div id="reconcileResult"></div>
+        </div>
+    </div>
+
     <script>
         function csrfToken() {
             return document.cookie.split('; ').find(row => row.startsWith('XSRF-TOKEN='))?.split('=')[1];
@@ -461,7 +470,7 @@
 
         // Close modal when clicking outside of it
         window.onclick = function(event) {
-            ['customerModal', 'moneyModal', 'ledgerModal'].forEach(id => {
+            ['customerModal', 'moneyModal', 'ledgerModal', 'reconcileModal'].forEach(id => {
                 const modal = document.getElementById(id);
                 if (event.target === modal) {
                     modal.style.display = 'none';
@@ -537,6 +546,7 @@
                         <button class="action-btn" onclick="openMoneyModal(${account.id}, 'deposits')">Deposit</button>
                         <button class="action-btn" onclick="openMoneyModal(${account.id}, 'withdrawals')">Withdraw</button>
                         <button class="action-btn" onclick="openLedger(${account.id})">Ledger</button>
+                        <button class="action-btn" onclick="reconcileAccount(${account.id})">Reconcile</button>
                     </td>
                 `;
                 body.appendChild(row);
@@ -658,6 +668,36 @@
 
         function closeLedgerModal() {
             document.getElementById('ledgerModal').style.display = 'none';
+        }
+
+        async function reconcileAccount(accountId) {
+            document.getElementById('reconcileAccountId').textContent = accountId;
+            const resultDiv = document.getElementById('reconcileResult');
+            resultDiv.innerHTML = '<p>Checking...</p>';
+            document.getElementById('reconcileModal').style.display = 'block';
+
+            try {
+                const response = await fetch(`/api/accounts/${accountId}/reconcile`);
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<p class="error-text">${await parseErrorMessage(response)}</p>`;
+                    return;
+                }
+                const result = await response.json();
+                if (result.consistent) {
+                    resultDiv.innerHTML = '<p class="success-text">Ledger is consistent - no discrepancies found.</p>';
+                    return;
+                }
+                resultDiv.innerHTML = `
+                    <p class="error-text">${result.discrepancies.length} discrepanc${result.discrepancies.length === 1 ? 'y' : 'ies'} found:</p>
+                    <ul>${result.discrepancies.map(d => `<li class="error-text">${d}</li>`).join('')}</ul>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error-text">Error: ${error.message}</p>`;
+            }
+        }
+
+        function closeReconcileModal() {
+            document.getElementById('reconcileModal').style.display = 'none';
         }
 
         async function submitTransfer() {

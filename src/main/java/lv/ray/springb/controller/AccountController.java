@@ -8,10 +8,12 @@ import lv.ray.springb.dto.AccountDTO;
 import lv.ray.springb.dto.CreateAccountRequest;
 import lv.ray.springb.dto.MoneyRequest;
 import lv.ray.springb.dto.OperationDTO;
+import lv.ray.springb.dto.ReconciliationResult;
 import lv.ray.springb.dto.TransferRequest;
 import lv.ray.springb.dto.TransferResultDTO;
 import lv.ray.springb.service.AccountException;
 import lv.ray.springb.service.AccountService;
+import lv.ray.springb.service.LedgerReconciliationService;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,9 +39,13 @@ public class AccountController
 
 	private final AccountService accountService;
 
-	public AccountController(final AccountService accountService)
+	private final LedgerReconciliationService reconciliationService;
+
+	public AccountController(final AccountService accountService,
+			final LedgerReconciliationService reconciliationService)
 	{
 		this.accountService = accountService;
+		this.reconciliationService = reconciliationService;
 	}
 
 	@PostMapping
@@ -66,6 +72,19 @@ public class AccountController
 	public List<OperationDTO> getOperations(@PathVariable final Long id, final Authentication authentication)
 	{
 		return accountService.getOperations(id, authentication.getName());
+	}
+
+	/**
+	 * Ownership is enforced the same way every other account endpoint enforces it: {@code
+	 * getAccount} throws (404, whether the id is unknown or simply belongs to someone else) before
+	 * the reconciliation service ever sees the id, so this can't be used to probe another
+	 * caller's ledger.
+	 */
+	@GetMapping(SubPaths.BY_ID + SubPaths.RECONCILE)
+	public ReconciliationResult reconcile(@PathVariable final Long id, final Authentication authentication)
+	{
+		accountService.getAccount(id, authentication.getName());
+		return reconciliationService.reconcileAccount(id);
 	}
 
 	@PostMapping(SubPaths.BY_ID + SubPaths.DEPOSITS)

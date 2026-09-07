@@ -75,6 +75,8 @@ public final class ApiConstants
 		public static final String WITHDRAWALS = "/withdrawals";
 
 		public static final String TRANSFERS = "/transfers";
+
+		public static final String RECONCILE = "/reconcile";
 	}
 
 	/**

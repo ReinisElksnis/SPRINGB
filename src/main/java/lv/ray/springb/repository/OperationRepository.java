@@ -16,6 +16,11 @@ public interface OperationRepository extends JpaRepository<Operation, Long>
 {
 	List<Operation> findByAccountIdOrderByCreatedAtDesc(Long accountId);
 
+	/** Chronological, for replaying the ledger in the order it was actually written - see
+	 * {@code LedgerReconciliationService}. Ordered by id rather than createdAt: id is a strictly
+	 * monotonic identity sequence, so it can never tie the way two timestamps theoretically could. */
+	List<Operation> findByAccountIdOrderByIdAsc(Long accountId);
+
 	List<Operation> findByTransferGroupId(String transferGroupId);
 
 	/**
