@@ -74,7 +74,8 @@ public class AccountMutationExecutor
 		final Operation operation = operationRepository.save(
 				new Operation(account, OperationType.DEPOSIT, amount, account.getBalance(), null));
 
-		claimKey(idempotencyKey, ownerUsername, operation.getId(), null);
+		claimKey(idempotencyKey, ownerUsername, operation.getId(), null,
+				RequestFingerprint.forDeposit(accountId, amount));
 		return operation;
 	}
 
@@ -91,7 +92,8 @@ public class AccountMutationExecutor
 		final Operation operation = operationRepository.save(
 				new Operation(account, OperationType.WITHDRAWAL, amount, account.getBalance(), null));
 
-		claimKey(idempotencyKey, ownerUsername, operation.getId(), null);
+		claimKey(idempotencyKey, ownerUsername, operation.getId(), null,
+				RequestFingerprint.forWithdrawal(accountId, amount));
 		return operation;
 	}
 
@@ -123,7 +125,8 @@ public class AccountMutationExecutor
 		final Operation credit = operationRepository.save(
 				new Operation(to, OperationType.TRANSFER_IN, amount, to.getBalance(), transferGroupId));
 
-		claimKey(idempotencyKey, ownerUsername, null, transferGroupId);
+		claimKey(idempotencyKey, ownerUsername, null, transferGroupId,
+				RequestFingerprint.forTransfer(fromAccountId, toAccountId, amount));
 		return Pair.of(debit, credit);
 	}
 
@@ -135,9 +138,10 @@ public class AccountMutationExecutor
 	}
 
 	private void claimKey(final String idempotencyKey, final String ownerUsername, final Long operationId,
-			final String transferGroupId)
+			final String transferGroupId, final String requestFingerprint)
 	{
 		idempotencyRecordRepository.save(
-				new IdempotencyRecord(idempotencyKey, ownerUsername, operationId, transferGroupId));
+				new IdempotencyRecord(idempotencyKey, ownerUsername, operationId, transferGroupId,
+						requestFingerprint));
 	}
 }

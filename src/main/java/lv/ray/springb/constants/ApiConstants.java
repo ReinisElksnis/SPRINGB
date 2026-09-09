@@ -147,6 +147,9 @@ public final class ApiConstants
 
 		public static final String IDEMPOTENCY_KEY_REQUIRED = "Idempotency-Key header is required for this operation";
 
+		/** Fallback when a request body is rejected but no field-level detail is available. */
+		public static final String INVALID_REQUEST_BODY = "Request body is missing required fields";
+
 		/** A key match alone never proves a replay is legitimate - see IdempotencyRecord's Javadoc. */
 		public static final String IDEMPOTENCY_KEY_CONFLICT =
 				"Idempotency-Key was already used for a different request";
