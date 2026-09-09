@@ -191,7 +191,7 @@ class AccountServiceImplTests
 	@Test
 	void deposit_returnsCachedResultOnLegitimateRetryByTheSameCaller()
 	{
-		final IdempotencyRecord existing = new IdempotencyRecord("key-1", ALICE, 1L, null);
+		final IdempotencyRecord existing = new IdempotencyRecord("key-1", ALICE, 1L, null, null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(existing));
 		when(operationRepository.findByIdWithAccount(1L))
 				.thenReturn(Optional.of(operation(1L, OperationType.DEPOSIT, "25.00", "125.00", null)));
@@ -203,9 +203,86 @@ class AccountServiceImplTests
 	}
 
 	@Test
+	void deposit_returnsCachedResultWhenTheReplayedRequestHasTheSameShape()
+	{
+		final IdempotencyRecord existing = new IdempotencyRecord("key-1", ALICE, 1L, null,
+				RequestFingerprint.forDeposit(10L, new BigDecimal("25.00")));
+		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(existing));
+		when(operationRepository.findByIdWithAccount(1L))
+				.thenReturn(Optional.of(operation(1L, OperationType.DEPOSIT, "25.00", "125.00", null)));
+
+		final var result = accountService.deposit(10L, ALICE, new BigDecimal("25.00"), "key-1");
+
+		assertThat(result.getId()).isEqualTo(1L);
+		verify(mutationExecutor, never()).depositOnce(any(), any(), any(), any());
+	}
+
+	@Test
+	void deposit_treatsADifferentlyScaledAmountAsTheSameRequest()
+	{
+		// A client retrying the same logical request may serialise 25.0 one time and 25.00 the next.
+		// Those are the same amount of money, so the replay must still be recognised as a retry.
+		final IdempotencyRecord existing = new IdempotencyRecord("key-1", ALICE, 1L, null,
+				RequestFingerprint.forDeposit(10L, new BigDecimal("25.00")));
+		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(existing));
+		when(operationRepository.findByIdWithAccount(1L))
+				.thenReturn(Optional.of(operation(1L, OperationType.DEPOSIT, "25.00", "125.00", null)));
+
+		final var result = accountService.deposit(10L, ALICE, new BigDecimal("25.0"), "key-1");
+
+		assertThat(result.getId()).isEqualTo(1L);
+	}
+
+	@Test
+	void withdraw_rejectsAKeyTheSameCallerAlreadySpentOnADifferentRequest()
+	{
+		// The bug this guards: the key was spent on a deposit, and is now replayed on a withdrawal
+		// of a different amount. Before the fingerprint check this passed the caller check, returned
+		// the earlier DEPOSIT with HTTP 200, and silently never performed the withdrawal.
+		final IdempotencyRecord spentOnADeposit = new IdempotencyRecord("key-1", ALICE, 1L, null,
+				RequestFingerprint.forDeposit(10L, new BigDecimal("25.00")));
+		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(spentOnADeposit));
+
+		assertThatThrownBy(() -> accountService.withdraw(10L, ALICE, new BigDecimal("500.00"), "key-1"))
+				.isInstanceOf(AccountException.class)
+				.satisfies(ex -> assertThat(((AccountException) ex).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+
+		verify(mutationExecutor, never()).withdrawOnce(any(), any(), any(), any());
+	}
+
+	@Test
+	void deposit_rejectsAReplayAimedAtADifferentAccount()
+	{
+		final IdempotencyRecord spentOnAccountTen = new IdempotencyRecord("key-1", ALICE, 1L, null,
+				RequestFingerprint.forDeposit(10L, new BigDecimal("25.00")));
+		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(spentOnAccountTen));
+
+		assertThatThrownBy(() -> accountService.deposit(99L, ALICE, new BigDecimal("25.00"), "key-1"))
+				.isInstanceOf(AccountException.class)
+				.satisfies(ex -> assertThat(((AccountException) ex).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+
+		verify(mutationExecutor, never()).depositOnce(any(), any(), any(), any());
+	}
+
+	@Test
+	void deposit_stillReplaysLegacyRecordsThatPredateTheFingerprintColumn()
+	{
+		// Rows written before request_fingerprint existed have none; a replay of one of those keys
+		// must keep working rather than failing the shape check it has no data for.
+		final IdempotencyRecord legacy = new IdempotencyRecord("key-1", ALICE, 1L, null, null);
+		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(legacy));
+		when(operationRepository.findByIdWithAccount(1L))
+				.thenReturn(Optional.of(operation(1L, OperationType.DEPOSIT, "25.00", "125.00", null)));
+
+		final var result = accountService.deposit(10L, ALICE, new BigDecimal("25.00"), "key-1");
+
+		assertThat(result.getId()).isEqualTo(1L);
+	}
+
+	@Test
 	void deposit_rejectsReplayOfAnotherUsersIdempotencyKey()
 	{
-		final IdempotencyRecord bobsRecord = new IdempotencyRecord("key-1", BOB, 1L, null);
+		final IdempotencyRecord bobsRecord = new IdempotencyRecord("key-1", BOB, 1L, null, null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-1")).thenReturn(Optional.of(bobsRecord));
 
 		assertThatThrownBy(() -> accountService.deposit(10L, ALICE, new BigDecimal("25.00"), "key-1"))
@@ -219,7 +296,7 @@ class AccountServiceImplTests
 	@Test
 	void deposit_resolvesALostIdempotencyRaceToTheWinnersResultForTheSameCaller()
 	{
-		final IdempotencyRecord winner = new IdempotencyRecord("key-1", ALICE, 1L, null);
+		final IdempotencyRecord winner = new IdempotencyRecord("key-1", ALICE, 1L, null, null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-1"))
 				.thenReturn(Optional.empty(), Optional.of(winner));
 		when(mutationExecutor.depositOnce(10L, ALICE, new BigDecimal("25.00"), "key-1"))
@@ -235,7 +312,7 @@ class AccountServiceImplTests
 	@Test
 	void deposit_rejectsALostIdempotencyRaceWonByAnotherCaller()
 	{
-		final IdempotencyRecord winner = new IdempotencyRecord("key-1", BOB, 1L, null);
+		final IdempotencyRecord winner = new IdempotencyRecord("key-1", BOB, 1L, null, null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-1"))
 				.thenReturn(Optional.empty(), Optional.of(winner));
 		when(mutationExecutor.depositOnce(10L, ALICE, new BigDecimal("25.00"), "key-1"))
@@ -303,7 +380,7 @@ class AccountServiceImplTests
 	@Test
 	void transfer_returnsCachedResultOnLegitimateRetryByTheSameCaller()
 	{
-		final IdempotencyRecord existing = new IdempotencyRecord("key-3", ALICE, null, "group-1");
+		final IdempotencyRecord existing = new IdempotencyRecord("key-3", ALICE, null, "group-1", null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-3")).thenReturn(Optional.of(existing));
 		when(operationRepository.findByTransferGroupIdWithAccount("group-1")).thenReturn(List.of(
 				operation(1L, OperationType.TRANSFER_OUT, "30.00", "70.00", "group-1"),
@@ -318,7 +395,7 @@ class AccountServiceImplTests
 	@Test
 	void transfer_rejectsReplayOfAnotherUsersIdempotencyKey()
 	{
-		final IdempotencyRecord bobsRecord = new IdempotencyRecord("key-3", BOB, null, "group-1");
+		final IdempotencyRecord bobsRecord = new IdempotencyRecord("key-3", BOB, null, "group-1", null);
 		when(idempotencyRecordRepository.findByIdempotencyKey("key-3")).thenReturn(Optional.of(bobsRecord));
 
 		assertThatThrownBy(() -> accountService.transfer(10L, 20L, ALICE, new BigDecimal("30.00"), "key-3"))

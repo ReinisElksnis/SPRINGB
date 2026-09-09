@@ -31,8 +31,11 @@ public class SecurityConfig
 {
 
 	/**
-	 * Signing in is optional in this demo: every existing endpoint stays public, and only
-	 * {@code /api/auth/members} requires an authenticated session so the difference is visible.
+	 * Two groups of endpoints require an authenticated session: everything under
+	 * {@code /api/accounts} (the whole money API - balances, deposits, withdrawals, transfers,
+	 * reconciliation) and {@code /api/auth/members}. Everything else - the greeting endpoint, the
+	 * customer/order demo endpoints, and the auth endpoints needed to obtain a session in the
+	 * first place - stays public, so the demo is still browsable without signing in.
 	 */
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception

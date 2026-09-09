@@ -119,11 +119,12 @@ public class AccountServiceImpl implements AccountService
 	{
 		validator.validateAmount(amount);
 		requireIdempotencyKey(idempotencyKey);
+		final String fingerprint = RequestFingerprint.forDeposit(accountId, amount);
 
 		final Optional<IdempotencyRecord> existing = idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey);
 		if (existing.isPresent())
 		{
-			return operationDto(requireSameCaller(existing.get(), ownerUsername).getOperationId());
+			return operationDto(requireSameRequest(existing.get(), ownerUsername, fingerprint).getOperationId());
 		}
 
 		try
@@ -132,7 +133,7 @@ public class AccountServiceImpl implements AccountService
 		}
 		catch (final DataIntegrityViolationException lostIdempotencyRace)
 		{
-			return resolveRacedSingleOperation(idempotencyKey, ownerUsername, lostIdempotencyRace);
+			return resolveRacedSingleOperation(idempotencyKey, ownerUsername, fingerprint, lostIdempotencyRace);
 		}
 	}
 
@@ -142,11 +143,12 @@ public class AccountServiceImpl implements AccountService
 	{
 		validator.validateAmount(amount);
 		requireIdempotencyKey(idempotencyKey);
+		final String fingerprint = RequestFingerprint.forWithdrawal(accountId, amount);
 
 		final Optional<IdempotencyRecord> existing = idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey);
 		if (existing.isPresent())
 		{
-			return operationDto(requireSameCaller(existing.get(), ownerUsername).getOperationId());
+			return operationDto(requireSameRequest(existing.get(), ownerUsername, fingerprint).getOperationId());
 		}
 
 		try
@@ -155,7 +157,7 @@ public class AccountServiceImpl implements AccountService
 		}
 		catch (final DataIntegrityViolationException lostIdempotencyRace)
 		{
-			return resolveRacedSingleOperation(idempotencyKey, ownerUsername, lostIdempotencyRace);
+			return resolveRacedSingleOperation(idempotencyKey, ownerUsername, fingerprint, lostIdempotencyRace);
 		}
 	}
 
@@ -166,11 +168,12 @@ public class AccountServiceImpl implements AccountService
 		validator.validateAmount(amount);
 		validator.validateDistinctAccounts(fromAccountId, toAccountId);
 		requireIdempotencyKey(idempotencyKey);
+		final String fingerprint = RequestFingerprint.forTransfer(fromAccountId, toAccountId, amount);
 
 		final Optional<IdempotencyRecord> existing = idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey);
 		if (existing.isPresent())
 		{
-			return transferResultDto(requireSameCaller(existing.get(), ownerUsername).getTransferGroupId());
+			return transferResultDto(requireSameRequest(existing.get(), ownerUsername, fingerprint).getTransferGroupId());
 		}
 
 		try
@@ -182,7 +185,8 @@ public class AccountServiceImpl implements AccountService
 		catch (final DataIntegrityViolationException lostIdempotencyRace)
 		{
 			return idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey)
-					.map(record -> transferResultDto(requireSameCaller(record, ownerUsername).getTransferGroupId()))
+					.map(record -> transferResultDto(
+							requireSameRequest(record, ownerUsername, fingerprint).getTransferGroupId()))
 					.orElseThrow(() -> lostIdempotencyRace);
 		}
 	}
@@ -205,25 +209,43 @@ public class AccountServiceImpl implements AccountService
 	}
 
 	private OperationDTO resolveRacedSingleOperation(final String idempotencyKey, final String ownerUsername,
-			final DataIntegrityViolationException lostIdempotencyRace)
+			final String requestFingerprint, final DataIntegrityViolationException lostIdempotencyRace)
 	{
 		return idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey)
-				.map(record -> operationDto(requireSameCaller(record, ownerUsername).getOperationId()))
+				.map(record -> operationDto(
+						requireSameRequest(record, ownerUsername, requestFingerprint).getOperationId()))
 				.orElseThrow(() -> lostIdempotencyRace);
 	}
 
 	/**
-	 * A key match alone is not proof a cached result belongs to the caller asking for it - a
-	 * collision, or a client bug that reuses a key across two different requests, would otherwise
-	 * hand one user's operation details back to a different caller. Reject the replay outright
-	 * rather than ever return someone else's result.
+	 * A key match alone is not proof that a cached result answers the request being made, so both
+	 * things recorded alongside the key are re-checked before it is returned.
+	 *
+	 * <p>The caller check stops a collision handing one user's operation details to a different
+	 * caller. The fingerprint check stops the more dangerous case, which the caller check cannot
+	 * see at all: the <em>same</em> caller reusing one key across two genuinely different requests.
+	 * Without it, a key first spent on a deposit and then replayed on a withdrawal passed straight
+	 * through and returned the deposit's result with HTTP 200 - the withdrawal never happened and
+	 * the client was told it had succeeded. Rejecting outright is the only safe answer: the cached
+	 * result is not an answer to this request, and performing the request would break the promise
+	 * that one key means one mutation.
+	 *
+	 * <p>A null fingerprint means a row written before that column existed. Those skip the shape
+	 * check rather than failing every replay of a pre-existing key; the caller check still applies.
 	 */
-	private IdempotencyRecord requireSameCaller(final IdempotencyRecord record, final String ownerUsername)
+	private IdempotencyRecord requireSameRequest(final IdempotencyRecord record, final String ownerUsername,
+			final String requestFingerprint)
 	{
 		if (!record.getOwnerUsername().equals(ownerUsername))
 		{
 			throw new AccountException(HttpStatus.CONFLICT, Messages.IDEMPOTENCY_KEY_CONFLICT);
 		}
+
+		if (record.getRequestFingerprint() != null && !record.getRequestFingerprint().equals(requestFingerprint))
+		{
+			throw new AccountException(HttpStatus.CONFLICT, Messages.IDEMPOTENCY_KEY_CONFLICT);
+		}
+
 		return record;
 	}
 

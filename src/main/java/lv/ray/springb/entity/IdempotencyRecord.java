@@ -18,11 +18,19 @@ import java.time.LocalDateTime;
  * {@code Persistable} to override it - the unique constraint on {@code idempotencyKey} still gives
  * the same guarantee, since a concurrent duplicate still fails that constraint on insert.
  *
- * <p>{@code ownerUsername} records who the key was originally claimed by. {@code AccountServiceImpl}
- * checks it against the current caller before ever returning a cached result for a replayed key -
- * a key match alone is not proof the replay is legitimate (a collision, or a client bug that reuses
- * a key across two different requests, would otherwise hand one user's operation details back to a
- * different caller).
+ * <p>A key match alone is never proof that a replay is legitimate, so two things are recorded
+ * alongside it and both are re-checked before any cached result is returned.
+ * {@code ownerUsername} records who the key was originally claimed by, so a collision cannot hand
+ * one user's operation details to a different caller. {@code requestFingerprint} records <em>what
+ * the key was spent on</em> - the operation type, the account(s) involved and the amount - so a
+ * client that reuses one key across two genuinely different requests is rejected outright rather
+ * than being told its second request succeeded while the first one's result is quietly returned
+ * instead. Without it, a deposit key replayed on a withdrawal would drop the withdrawal and answer
+ * 200; that is the precise failure mode idempotency exists to prevent.
+ *
+ * <p>The fingerprint is nullable only because rows written before it existed have none. A null is
+ * read as "legacy row, shape unknown" and skips the shape check rather than failing every replay
+ * of a pre-existing key; the owner check still applies to those rows.
  */
 @Entity
 @Table(name = "idempotency_records")
@@ -45,6 +53,9 @@ public class IdempotencyRecord
 	@Column(name = "transfer_group_id", length = 36)
 	private String transferGroupId;
 
+	@Column(name = "request_fingerprint", length = 200)
+	private String requestFingerprint;
+
 	@Column(name = "created_at", nullable = false)
 	private LocalDateTime createdAt;
 
@@ -54,13 +65,14 @@ public class IdempotencyRecord
 	}
 
 	public IdempotencyRecord(final String idempotencyKey, final String ownerUsername, final Long operationId,
-			final String transferGroupId)
+			final String transferGroupId, final String requestFingerprint)
 	{
 		this();
 		this.idempotencyKey = idempotencyKey;
 		this.ownerUsername = ownerUsername;
 		this.operationId = operationId;
 		this.transferGroupId = transferGroupId;
+		this.requestFingerprint = requestFingerprint;
 	}
 
 	// Getters and Setters
@@ -112,6 +124,16 @@ public class IdempotencyRecord
 	public void setTransferGroupId(final String transferGroupId)
 	{
 		this.transferGroupId = transferGroupId;
+	}
+
+	public String getRequestFingerprint()
+	{
+		return requestFingerprint;
+	}
+
+	public void setRequestFingerprint(final String requestFingerprint)
+	{
+		this.requestFingerprint = requestFingerprint;
 	}
 
 	public LocalDateTime getCreatedAt()
