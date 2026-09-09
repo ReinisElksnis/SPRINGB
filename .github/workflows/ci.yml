@@ -23,7 +23,7 @@ jobs:
           java-version: '25'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # Fast tier first: no Spring context, no Docker - fails in seconds if it's going to fail.
       - name: Run unit tests
