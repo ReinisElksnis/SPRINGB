@@ -70,6 +70,20 @@ Two tiers on separate source sets, so the fast one stays fast:
 | `./gradlew integrationTest` | `src/integrationTest/java` | Real application context against a Testcontainers Postgres; web tests drive the real security filter chain through MockMvc |
 | `./gradlew build` | both | Adds Checkstyle and the aggregated JaCoCo report |
 
+`TransferStrategyBenchmark` also lives in the integration source set but is skipped unless asked
+for — it measures rather than asserts, and a timing number is the wrong thing to gate CI on:
+
+```bash
+./gradlew integrationTest -Dspringb.benchmark=true --tests '*TransferStrategyBenchmark*'
+```
+
+It runs a fixed number of transfers over a rising number of threads contending on one account and
+prints a table comparing the two strategies. On the machine this was developed on the crossover sits
+between one and two concurrent writers: optimistic is ~37% faster uncontended, and by 16 threads it
+does roughly twice the work (95 discarded attempts per 96 transfers) with a p95 latency of 269ms
+against the pessimistic path's 64ms. See
+[the concurrency deep dive](docs/deep-dives/concurrency.md) for the full table and what it means.
+
 Checkstyle is **report-only** (`ignoreFailures = true`) — the existing code predates the ruleset,
 so it is a signal for new code rather than a gate. Reports land under `build/reports/`.
 
@@ -105,7 +119,8 @@ under the `springb.auth.*` keys in `application.properties`.
 | `GET` | `/{id}/reconcile` | Replays the ledger and reports discrepancies |
 | `POST` | `/{id}/deposits` | Requires `Idempotency-Key` |
 | `POST` | `/{id}/withdrawals` | Requires `Idempotency-Key` |
-| `POST` | `/transfers` | Requires `Idempotency-Key` |
+| `POST` | `/transfers` | Requires `Idempotency-Key`; pessimistic row locks |
+| `POST` | `/transfers/optimistic` | Same contract, optimistic locking + bounded retry; reports `attempts` |
 
 There is no "act on behalf of another user" path — an account id in a URL can only ever resolve
 to one of the caller's own accounts.
@@ -126,6 +141,13 @@ to one of the caller's own accounts.
 - **Concurrent writes take a pessimistic row lock** (`AccountRepository`, `PESSIMISTIC_WRITE`);
   `AccountServiceConcurrencyTests` covers it. Transfers always lock in ascending account-id order,
   so two transfers running in opposite directions between the same pair cannot deadlock.
+- **Two transfer implementations, on purpose.** `/transfers` takes pessimistic row locks;
+  `/transfers/optimistic` takes none and relies on an `@Version` counter on `accounts` (V5) to make
+  a write built on a stale read match zero rows, with `ConcurrencyRetryTemplate` retrying the whole
+  transaction on a fresh read. The optimistic response reports how many `attempts` it took, which is
+  the signal for deciding which strategy suits a given account: consistently 1 means optimistic is
+  winning, consistently high means a pessimistic lock would do less total work. Both paths share the
+  same validation, ledger and idempotency contract, so they are directly comparable.
 - **Events go through a transactional outbox.** Every ledger row also writes an `outbox_messages`
   row *in the same transaction* (`OutboxAppender`, which deliberately has no `@Transactional` of
   its own so it joins the caller), so an event and the money it describes commit together or not

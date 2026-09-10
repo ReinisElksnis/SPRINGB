@@ -42,6 +42,26 @@ public class Account
 	@Column(name = "created_at", nullable = false)
 	private LocalDateTime createdAt;
 
+	/**
+	 * Optimistic-locking counter, incremented by Hibernate on every update and appended to each
+	 * UPDATE's WHERE clause so a write built on a stale read matches zero rows and throws rather
+	 * than silently overwriting. Read {@code V5__add_account_version_for_optimistic_locking.sql}
+	 * for the mechanism.
+	 *
+	 * <p>Present on the entity, so it applies to <em>every</em> write path - but only the optimistic
+	 * one can ever observe a conflict. {@code AccountMutationExecutor} takes a row lock before
+	 * reading, so by construction nobody else can have read the same version in the meantime; there
+	 * the counter just advances. Keeping one entity rather than two is deliberate: two mappings of
+	 * the same table, one versioned and one not, would let the unversioned path bump the row without
+	 * the versioned path noticing, and the check would quietly stop meaning anything.
+	 *
+	 * <p>No setter. This field belongs to the persistence provider - assigning it from application
+	 * code is how optimistic locking gets accidentally disabled.
+	 */
+	@Version
+	@Column(nullable = false)
+	private long version;
+
 	@OneToMany(mappedBy = "account", cascade = CascadeType.ALL, orphanRemoval = true)
 	@JsonIgnore
 	private List<Operation> operations = new ArrayList<>();
@@ -56,6 +76,11 @@ public class Account
 		this();
 		this.owner = owner;
 		this.currency = currency;
+	}
+
+	public long getVersion()
+	{
+		return version;
 	}
 
 	// Getters and Setters

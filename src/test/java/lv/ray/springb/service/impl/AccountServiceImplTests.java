@@ -2,6 +2,7 @@ package lv.ray.springb.service.impl;
 
 import lv.ray.springb.dto.AccountDTO;
 import lv.ray.springb.dto.TransferResultDTO;
+import lv.ray.springb.config.OptimisticTransferProperties;
 import lv.ray.springb.entity.Account;
 import lv.ray.springb.entity.AppUser;
 import lv.ray.springb.entity.IdempotencyRecord;
@@ -24,6 +25,7 @@ import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
@@ -67,6 +69,9 @@ class AccountServiceImplTests
 	@Mock
 	private AccountMutationExecutor mutationExecutor;
 
+	@Mock
+	private OptimisticAccountMutationExecutor optimisticMutationExecutor;
+
 	private AccountServiceImpl accountService;
 
 	private Account aliceAccount;
@@ -74,8 +79,13 @@ class AccountServiceImplTests
 	@BeforeEach
 	void setUp()
 	{
+		// A real ConcurrencyRetryTemplate rather than a mock: it is the piece under test in the
+		// optimistic cases below, and stubbing it would assert nothing about the retry behaviour.
+		// Zero backoff so contention tests do not spend real time asleep.
 		accountService = new AccountServiceImpl(accountRepository, operationRepository,
-				idempotencyRecordRepository, appUserRepository, validator, mutationExecutor);
+				idempotencyRecordRepository, appUserRepository, validator, mutationExecutor,
+				optimisticMutationExecutor,
+				new ConcurrencyRetryTemplate(new OptimisticTransferProperties(3, Duration.ZERO, Duration.ZERO)));
 
 		final AppUser alice = new AppUser(ALICE, "alice@example.com", "hash", "Alice");
 		aliceAccount = new Account(alice, "EUR");

@@ -43,6 +43,33 @@ Three ways out, and knowing why this codebase chose the first is the actual inte
   but it converts a *blocking* problem into a *retry* problem: you must now handle serialization
   failures everywhere, which is more code than the explicit lock, not less.
 
+**Both of the first two are now implemented in this repo, against the same domain**, which is the
+best way to compare them:
+
+| | Pessimistic | Optimistic |
+|---|---|---|
+| Class | `AccountMutationExecutor` | `OptimisticAccountMutationExecutor` |
+| Endpoint | `POST /api/accounts/transfers` | `POST /api/accounts/transfers/optimistic` |
+| Read | `findByIdForUpdate` (`FOR UPDATE`) | `findById` — no lock at all |
+| Conflict is | *prevented* at read time | *detected* at write time |
+| Cost of contention | a blocked connection | a discarded transaction, retried |
+| On failure | (cannot happen) | `ObjectOptimisticLockingFailureException` → retry → 409 |
+
+The single most important thing to be able to say about the optimistic version: **every validation
+in it runs against a possibly stale read.** `validateSufficientFunds` can pass on a balance another
+transaction has already spent. That is not a tolerated bug — correctness does not come from the
+check, it comes from the version predicate on the UPDATE (`WHERE id = ? AND version = 5`), which
+matches zero rows if anything moved and aborts the attempt before it commits. The retry then
+re-reads and re-validates, and *that* pass decides the outcome. The pessimistic version validates
+against data nobody can change, because it locked first. Both are correct; they pay at different
+times.
+
+**Measured, not asserted.** I removed `@Version` from `Account` and re-ran
+`OptimisticTransferIntegrationTests`: ten concurrent transfers of 5.00 from a 100.00 account left
+the source at **95.00 instead of 50.00** — nine of the ten debits were lost updates — while all ten
+credits landed on the destination. The system invented 45.00. That is what §1's table describes,
+actually happening.
+
 There is a fourth that sidesteps the whole thing: `UPDATE accounts SET balance = balance - 80 WHERE
 id = ? AND balance >= 80`, then check the affected row count. One atomic statement, no read-then-
 write gap. It doesn't fit here because the code needs the resulting balance for the ledger's
@@ -85,6 +112,132 @@ doing as a backstop.
 **Probe:** *"Does this still work with three accounts?"* Yes — a total order over all lockable
 resources prevents cycles for any number of them, which is why the rule is stated over ids rather
 than over "from and to".
+
+**Optimistic locking does not remove deadlock — it moves it.** No locks are taken on read, but the
+UPDATEs at flush still take write locks, so two opposite-direction transfers can still deadlock at
+commit time, in a narrower window. `OptimisticAccountMutationExecutor` therefore *still* loads
+accounts in id order — not for read locks this time, but because Hibernate's flush follows its
+action queue, so a consistent load order makes a consistent update order. That makes deadlock rare
+rather than impossible (flush ordering is not a contract), which is why the retry policy treats a
+deadlock as retryable rather than assuming it away.
+
+---
+
+## 2a. Retrying: what may be retried, and what must not
+
+`ConcurrencyRetryTemplate` — `src/main/java/lv/ray/springb/service/impl/ConcurrencyRetryTemplate.java`
+
+Two things make this correct, and both are easy to get wrong.
+
+**The retry must live outside the transaction.** An optimistic conflict is discovered at flush, and
+by then the transaction is doomed and marked rollback-only. Retrying inside it would reuse a
+persistence context full of entities whose versions are already known to be stale, so every attempt
+would fail identically. That is precisely why the executor is `REQUIRES_NEW` and the template has no
+transactional annotation: each retry needs a new transaction, a new persistence context, and above
+all **a new read**.
+
+**Not every failure is retryable, and Spring's exception hierarchy encodes which.**
+
+- `ConcurrencyFailureException` (transient) — retry. Covers `ObjectOptimisticLockingFailureException`
+  (version mismatch), `CannotAcquireLockException` (deadlock), and serialization failures. One catch
+  clause, three failures that all mean "you raced and lost".
+- `DataIntegrityViolationException` (**non**-transient) — must **not** be retried. This is what a
+  lost idempotency-key race throws, and it means *the work is already done*. Retrying it is exactly
+  what the idempotency key exists to prevent; it has to pass through to the caller so the winner's
+  result can be returned.
+- A domain rejection (insufficient funds) — must not be retried either. It is a fact about the
+  request, not a race, and retrying burns the budget rediscovering the same answer.
+
+Being able to say *"transient means retry, non-transient means don't, and the framework already made
+that distinction for me"* is a much better answer than "I catch the exception and try again".
+
+**The budget matters too.** Five attempts, then a 409 telling the client to retry later — because
+an unbounded retry on a permanently hot row pins a request thread forever. Same reasoning as the
+outbox's `DEAD` state, one layer up. And the backoff is jittered for the same reason: two
+transactions that collided would otherwise back off identically and collide again in lockstep.
+
+**Probe:** *"When would you pick optimistic over pessimistic here?"* Contention frequency decides it.
+The endpoint reports `attempts` in its response for exactly this reason — consistently 1 means
+optimistic is winning (no locks, no blocking); consistently high means every attempt is wasted work
+and a pessimistic lock does less total work by making writers wait once instead of repeatedly
+redoing and discarding a whole transaction.
+
+---
+
+## 2b. Where the crossover actually is — measured
+
+`TransferStrategyBenchmark` — `src/integrationTest/java/lv/ray/springb/service/TransferStrategyBenchmark.java`
+
+```
+./gradlew integrationTest -Dspringb.benchmark=true --tests '*TransferStrategyBenchmark*'
+```
+
+96 transfers, fixed, split over N threads all drawing from **one shared account**. Total work is
+constant, so threads is purely a contention dial. Each thread transfers to its own destination, so
+the source is the only contended row. Medians of 5 runs; every run was checked to leave the balance
+exact.
+
+```
+threads  strategy        millis    txn/sec   mean us    p95 us    wasted  >budget
+1        PESSIMISTIC        592      162.1      5296     10484         0        0
+1        OPTIMISTIC         431      222.6      3670      4660         0        0
+2        PESSIMISTIC        333      287.8      5240      6422         0        0
+2        OPTIMISTIC         513      186.8      7428      5701         5        0
+4        PESSIMISTIC        425      225.8     13678     17461         0        0
+4        OPTIMISTIC         479      200.1     10352      4697        17        1
+8        PESSIMISTIC        435      220.2     27882     42322         0        0
+8        OPTIMISTIC         831      115.5     31315    162747        44        4
+16       PESSIMISTIC        425      225.5     50672     64448         0        0
+16       OPTIMISTIC         831      115.4     57847    269034        95        9
+```
+
+**The crossover is between one and two concurrent writers to the same row.** That is much earlier
+than intuition suggests, and it is the headline finding.
+
+Four things in that table are worth being able to explain:
+
+**1. Pessimistic throughput is flat — ~220 txn/sec at 2, 4, 8 and 16 threads.** Adding threads adds
+no throughput, because writes to one row serialize no matter what. But it adds no *waste* either.
+The lock converts concurrency into an orderly queue, and a queue's total work does not grow with its
+length.
+
+**2. Optimistic wins only when uncontended** — 222.6 vs 162.1 txn/sec at one thread, ~37% faster,
+because it never takes a lock, never waits, and issues less work per transaction. That is the whole
+case for it, and it is a real case.
+
+**3. Wasted work grows faster than the contention does:** 0 → 5 → 17 → 44 → 95. At 16 threads there
+are 95 discarded attempts for 96 successful transfers — the system does roughly twice the work and
+throws half of it away. Each discard is a full transaction: reads, validation, ledger rows, outbox
+rows, all rolled back. This is why optimistic locking degrades rather than merely plateaus: every
+loser makes the next round more expensive.
+
+**4. The tail is where it really hurts.** Optimistic p95 goes 4.7ms → 269ms, a ~58x blowup.
+Pessimistic goes 10.5ms → 64ms, about 6x. Look at mean versus p95 at 16 threads: pessimistic is
+50.7ms mean / 64.4ms p95 — tight. Optimistic is 57.8ms mean / 269ms p95 — a heavy tail hiding behind
+a similar average.
+
+That last point is the deepest one and generalises well beyond this code: **a lock queue is
+approximately fair; retrying is not.** A blocked thread is guaranteed to make progress when its turn
+comes. A retrying thread re-enters the same lottery each time and can lose repeatedly — that is
+starvation, and it is what the tail is made of. If you only watch averages, you will not see it.
+
+And under the *shipped* retry budget of 5, the `>budget` column says 9 of 96 transfers (9.4%) would
+have failed with a 409 at 16 threads. The optimistic path does not just get slower under contention;
+it starts refusing work.
+
+**So which would you choose?** Not one globally — per account. A typical retail account has one
+writer at a time and optimistic is strictly better. A treasury or settlement account with many
+concurrent writers is exactly where it collapses. That is why the endpoint reports `attempts`:
+it is the signal that tells you which regime a given account is in.
+
+**On trusting these numbers.** One machine, one container, no network between app and database, one
+workload shape. The *shape* of the curves transfers; the absolute figures do not. Two confounds were
+found and removed by looking at results that made no sense — `spring.jpa.show-sql=true` would have
+measured console formatting, and an insufficient warmup initially made the *least* contended case
+look slowest (1179ms against ~500ms for the same strategy under more contention). Less contention
+cannot be slower; that impossibility is what exposed the artifact. Being able to say "I distrusted
+my own benchmark and here is what it was actually measuring" is worth more in an interview than any
+number in the table.
 
 ---
 
@@ -242,3 +395,14 @@ Answer out loud before reading the section back.
 5. `volatile` vs `AtomicInteger` vs `synchronized` — what does each actually guarantee?
 6. You have 10 DB connections and 10,000 virtual threads. What is your concurrency?
 7. Why is `Executors.newFixedThreadPool` a latent OOM under sustained overload?
+8. In the optimistic transfer, `validateSufficientFunds` runs on a possibly stale balance. Why is
+   that not a bug?
+9. Why must the retry sit outside the transaction rather than inside it?
+10. Why is `DataIntegrityViolationException` excluded from the retry when
+    `OptimisticLockingFailureException` is included?
+11. Does optimistic locking eliminate deadlock? Justify the answer.
+12. Pessimistic throughput stays flat as threads rise while optimistic degrades. Why does the flat
+    one not also degrade?
+13. At 16 threads both strategies have a ~50ms mean, but p95 is 64ms vs 269ms. What causes that
+    divergence, and why is the mean misleading?
+14. Which strategy would you put on a treasury account, and which on a retail one?

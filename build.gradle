@@ -86,6 +86,14 @@ testing {
                 all {
                     testTask.configure {
                         shouldRunAfter(tasks.test)
+
+                        // The transfer-strategy benchmark lives in this source set so it is compiled
+                        // (and therefore cannot rot) on every build, but it is skipped unless asked
+                        // for: it takes minutes, it measures rather than asserts, and a timing
+                        // number is exactly the wrong thing to gate CI on. Gradle does not forward
+                        // -D to the test JVM, hence this line.
+                        //   ./gradlew integrationTest -Dspringb.benchmark=true --tests '*Benchmark*'
+                        systemProperty 'springb.benchmark', System.getProperty('springb.benchmark', 'false')
                     }
                 }
             }

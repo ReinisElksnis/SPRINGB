@@ -4,6 +4,7 @@ import lv.ray.springb.constants.ApiConstants.Defaults;
 import lv.ray.springb.constants.ApiConstants.Messages;
 import lv.ray.springb.dto.AccountDTO;
 import lv.ray.springb.dto.OperationDTO;
+import lv.ray.springb.dto.OptimisticTransferResultDTO;
 import lv.ray.springb.dto.TransferResultDTO;
 import lv.ray.springb.entity.Account;
 import lv.ray.springb.entity.AppUser;
@@ -60,12 +61,18 @@ public class AccountServiceImpl implements AccountService
 
 	private final AccountMutationExecutor mutationExecutor;
 
+	private final OptimisticAccountMutationExecutor optimisticMutationExecutor;
+
+	private final ConcurrencyRetryTemplate retryTemplate;
+
 	public AccountServiceImpl(final AccountRepository accountRepository,
 			final OperationRepository operationRepository,
 			final IdempotencyRecordRepository idempotencyRecordRepository,
 			final AppUserRepository appUserRepository,
 			final AccountOperationValidator validator,
-			final AccountMutationExecutor mutationExecutor)
+			final AccountMutationExecutor mutationExecutor,
+			final OptimisticAccountMutationExecutor optimisticMutationExecutor,
+			final ConcurrencyRetryTemplate retryTemplate)
 	{
 		this.accountRepository = accountRepository;
 		this.operationRepository = operationRepository;
@@ -73,6 +80,8 @@ public class AccountServiceImpl implements AccountService
 		this.appUserRepository = appUserRepository;
 		this.validator = validator;
 		this.mutationExecutor = mutationExecutor;
+		this.optimisticMutationExecutor = optimisticMutationExecutor;
+		this.retryTemplate = retryTemplate;
 	}
 
 	@Override
@@ -189,6 +198,65 @@ public class AccountServiceImpl implements AccountService
 							requireSameRequest(record, ownerUsername, fingerprint).getTransferGroupId()))
 					.orElseThrow(() -> lostIdempotencyRace);
 		}
+	}
+
+	/**
+	 * The optimistic sibling of {@link #transfer}. The idempotency handling either side of the
+	 * attempt is deliberately identical - the strategies differ in how a <em>concurrent balance
+	 * change</em> is handled, not in how a <em>duplicate request</em> is, and mirroring the
+	 * surrounding code is what makes that comparison honest.
+	 *
+	 * <p>The one structural difference is that the executor call is wrapped in
+	 * {@link ConcurrencyRetryTemplate}. Note where the wrapping sits: around the call to the
+	 * {@code REQUIRES_NEW} method, so every retry is a new transaction with a new read. Retrying
+	 * anywhere inside that boundary would re-run the same doomed transaction with the same stale
+	 * versions.
+	 *
+	 * <p>The {@code DataIntegrityViolationException} catch stays <em>outside</em> the retry, and the
+	 * ordering matters: the retry template only swallows transient concurrency failures, so a lost
+	 * idempotency-key race passes through it untouched and lands here, where it is resolved to the
+	 * winner's result exactly as on the pessimistic path.
+	 */
+	@Override
+	public OptimisticTransferResultDTO transferOptimistic(final Long fromAccountId, final Long toAccountId,
+			final String ownerUsername, final BigDecimal amount, final String idempotencyKey)
+	{
+		validator.validateAmount(amount);
+		validator.validateDistinctAccounts(fromAccountId, toAccountId);
+		requireIdempotencyKey(idempotencyKey);
+		final String fingerprint = RequestFingerprint.forTransfer(fromAccountId, toAccountId, amount);
+
+		final Optional<IdempotencyRecord> existing = idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey);
+		if (existing.isPresent())
+		{
+			// A replay never contended with anything - it did no work at all - so it reports one
+			// attempt rather than inheriting whatever the original request went through.
+			return optimisticResultDto(
+					requireSameRequest(existing.get(), ownerUsername, fingerprint).getTransferGroupId(), 1);
+		}
+
+		try
+		{
+			final ConcurrencyRetryTemplate.Outcome<Pair<Operation, Operation>> outcome =
+					retryTemplate.execute(() -> optimisticMutationExecutor.transferOnce(fromAccountId, toAccountId,
+							ownerUsername, amount, idempotencyKey));
+
+			return new OptimisticTransferResultDTO(new OperationDTO(outcome.value().getFirst()),
+					new OperationDTO(outcome.value().getSecond()), outcome.attempts());
+		}
+		catch (final DataIntegrityViolationException lostIdempotencyRace)
+		{
+			return idempotencyRecordRepository.findByIdempotencyKey(idempotencyKey)
+					.map(record -> optimisticResultDto(
+							requireSameRequest(record, ownerUsername, fingerprint).getTransferGroupId(), 1))
+					.orElseThrow(() -> lostIdempotencyRace);
+		}
+	}
+
+	private OptimisticTransferResultDTO optimisticResultDto(final String transferGroupId, final int attempts)
+	{
+		final TransferResultDTO legs = transferResultDto(transferGroupId);
+		return new OptimisticTransferResultDTO(legs.debit(), legs.credit(), attempts);
 	}
 
 	private Account findOwned(final Long accountId, final String ownerUsername)

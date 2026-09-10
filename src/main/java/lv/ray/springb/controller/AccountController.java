@@ -9,6 +9,7 @@ import lv.ray.springb.dto.CreateAccountRequest;
 import lv.ray.springb.dto.MoneyRequest;
 import lv.ray.springb.dto.OperationDTO;
 import lv.ray.springb.dto.ReconciliationResult;
+import lv.ray.springb.dto.OptimisticTransferResultDTO;
 import lv.ray.springb.dto.TransferRequest;
 import lv.ray.springb.dto.TransferResultDTO;
 import lv.ray.springb.service.AccountException;
@@ -112,6 +113,23 @@ public class AccountController
 	{
 		return accountService.transfer(request.fromAccountId(), request.toAccountId(), authentication.getName(),
 				request.amount(), idempotencyKey);
+	}
+
+	/**
+	 * The optimistic-locking alternative to {@link #transfer}. Same request body, same
+	 * {@code Idempotency-Key} contract; the response additionally reports how many attempts the
+	 * transfer needed, which is the observable difference between the two strategies.
+	 *
+	 * <p>Answers 409 when it loses every attempt - a contended row rather than a bad request, so a
+	 * client should retry rather than change anything.
+	 */
+	@PostMapping(SubPaths.TRANSFERS + SubPaths.OPTIMISTIC)
+	public OptimisticTransferResultDTO transferOptimistic(@RequestBody final TransferRequest request,
+			@RequestHeader(name = IDEMPOTENCY_KEY_HEADER, required = false) final String idempotencyKey,
+			final Authentication authentication)
+	{
+		return accountService.transferOptimistic(request.fromAccountId(), request.toAccountId(),
+				authentication.getName(), request.amount(), idempotencyKey);
 	}
 
 	@ExceptionHandler(AccountException.class)

@@ -77,6 +77,9 @@ public final class ApiConstants
 		public static final String TRANSFERS = "/transfers";
 
 		public static final String RECONCILE = "/reconcile";
+
+		/** Alternative transfer path using optimistic locking - see OptimisticAccountMutationExecutor. */
+		public static final String OPTIMISTIC = "/optimistic";
 	}
 
 	/**
@@ -153,6 +156,14 @@ public final class ApiConstants
 		/** A key match alone never proves a replay is legitimate - see IdempotencyRecord's Javadoc. */
 		public static final String IDEMPOTENCY_KEY_CONFLICT =
 				"Idempotency-Key was already used for a different request";
+
+		/**
+		 * The optimistic path gave up. 409 rather than 500: nothing is broken and the request was
+		 * valid - it simply lost every race it was given, and retrying later is the correct response.
+		 */
+		public static final String TRANSFER_CONTENTION_EXHAUSTED =
+				"Transfer could not be completed after %d attempts because the accounts are under "
+						+ "heavy concurrent modification; retry the request";
 	}
 
 	/**

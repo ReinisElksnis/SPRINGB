@@ -17,6 +17,19 @@ public class AccountException extends RuntimeException
 		this.status = status;
 	}
 
+	/**
+	 * Keeps the underlying failure attached. The message a client sees is deliberately vague about
+	 * causes ("retry the request"), so without the cause a contention 409 would be untraceable in
+	 * the logs - you would know a transfer gave up but not whether it lost version checks, deadlocked,
+	 * or was interrupted. The cause never reaches the response body; {@code AccountController}'s
+	 * handler only reads {@link #getMessage()}.
+	 */
+	public AccountException(final HttpStatus status, final String message, final Throwable cause)
+	{
+		super(message, cause);
+		this.status = status;
+	}
+
 	public HttpStatus getStatus()
 	{
 		return status;
