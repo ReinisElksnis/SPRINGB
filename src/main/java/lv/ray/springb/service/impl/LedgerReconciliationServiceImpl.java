@@ -1,20 +1,13 @@
 package lv.ray.springb.service.impl;
 
-import lv.ray.springb.constants.ApiConstants.Messages;
 import lv.ray.springb.dto.ReconciliationResult;
 import lv.ray.springb.entity.Account;
 import lv.ray.springb.entity.Operation;
 import lv.ray.springb.repository.AccountRepository;
-import lv.ray.springb.repository.OperationRepository;
-import lv.ray.springb.service.AccountException;
 import lv.ray.springb.service.LedgerReconciliationService;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 
 
@@ -26,6 +19,14 @@ import java.util.List;
  * what was actually recorded catches two distinct failure modes a balance comparison alone cannot -
  * a row that was altered or deleted after being committed (tampering, a bad manual fix), and a
  * balance that was ever written by anything other than the normal mutation path.
+ *
+ * <p>The replay itself lives in {@link AccountLedgerReplayer}; this class only decides which
+ * accounts to replay. Note that nothing here is {@code @Transactional} - deliberately, and it is
+ * the opposite of the usual instinct. A transaction opened at this level would enclose every
+ * account's replay in one long-lived unit of work, which is exactly the shape that made the old
+ * implementation accumulate the whole database in one persistence context. Leaving this method
+ * untransacted is what lets each replay be its own short transaction that releases its memory and
+ * its connection when it finishes.
  */
 @Service
 public class LedgerReconciliationServiceImpl implements LedgerReconciliationService
@@ -33,68 +34,40 @@ public class LedgerReconciliationServiceImpl implements LedgerReconciliationServ
 
 	private final AccountRepository accountRepository;
 
-	private final OperationRepository operationRepository;
+	private final AccountLedgerReplayer replayer;
 
 	public LedgerReconciliationServiceImpl(final AccountRepository accountRepository,
-			final OperationRepository operationRepository)
+			final AccountLedgerReplayer replayer)
 	{
 		this.accountRepository = accountRepository;
-		this.operationRepository = operationRepository;
+		this.replayer = replayer;
 	}
 
 	@Override
-	@Transactional(readOnly = true)
 	public ReconciliationResult reconcileAccount(final Long accountId)
 	{
-		final Account account = accountRepository.findById(accountId)
-				.orElseThrow(() -> new AccountException(HttpStatus.NOT_FOUND,
-						String.format(Messages.FUNDS_ACCOUNT_NOT_FOUND, accountId)));
-
-		final List<Operation> operations = operationRepository.findByAccountIdOrderByIdAsc(accountId);
-		final List<String> discrepancies = new ArrayList<>();
-
-		BigDecimal expectedRunningBalance = BigDecimal.ZERO;
-		for (final Operation operation : operations)
-		{
-			expectedRunningBalance = expectedRunningBalance.add(signedAmount(operation));
-
-			if (expectedRunningBalance.compareTo(operation.getBalanceAfter()) != 0)
-			{
-				discrepancies.add(String.format(
-						"Operation %d (%s %s): ledger math gives a running balance of %s, but %s was recorded as balanceAfter",
-						operation.getId(), operation.getType(), operation.getAmount(), expectedRunningBalance,
-						operation.getBalanceAfter()));
-				// Resync to what was actually recorded so one bad row is reported once, rather than
-				// every operation after it also being flagged as a cascading false positive.
-				expectedRunningBalance = operation.getBalanceAfter();
-			}
-		}
-
-		if (expectedRunningBalance.compareTo(account.getBalance()) != 0)
-		{
-			discrepancies.add(String.format(
-					"Account %d balance is %s, but the ledger's final balance is %s",
-					accountId, account.getBalance(), expectedRunningBalance));
-		}
-
-		return new ReconciliationResult(accountId, discrepancies.isEmpty(), discrepancies);
+		return replayer.replay(accountId);
 	}
 
+	/**
+	 * Sweeps every account, one transaction each.
+	 *
+	 * <p>Identifiers are fetched rather than entities: the sweep needs nothing from an
+	 * {@link Account} except which ledger to replay, and a list of boxed longs is a few tens of
+	 * bytes per account against a fully hydrated entity plus its persistence-context snapshot.
+	 *
+	 * <p><b>What is still unbounded here, honestly:</b> both the id list and the returned results
+	 * grow with the number of accounts. That is a far smaller coefficient than the old
+	 * "every operation of every account" behaviour, and it is fine at this application's scale -
+	 * but it is the same shape of problem, and at a few million accounts the answer would be to
+	 * page through the ids and stream the results out to wherever they are going rather than
+	 * collecting them into a list at all. Worth naming rather than leaving as a lurking surprise.
+	 */
 	@Override
-	@Transactional(readOnly = true)
 	public List<ReconciliationResult> reconcileAllAccounts()
 	{
-		return accountRepository.findAll().stream()
-				.map(account -> reconcileAccount(account.getId()))
+		return accountRepository.findAllAccountIds().stream()
+				.map(replayer::replay)
 				.toList();
-	}
-
-	private static BigDecimal signedAmount(final Operation operation)
-	{
-		return switch (operation.getType())
-		{
-			case DEPOSIT, TRANSFER_IN -> operation.getAmount();
-			case WITHDRAWAL, TRANSFER_OUT -> operation.getAmount().negate();
-		};
 	}
 }

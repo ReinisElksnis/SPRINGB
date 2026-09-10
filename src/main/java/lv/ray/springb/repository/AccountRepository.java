@@ -26,4 +26,12 @@ public interface AccountRepository extends JpaRepository<Account, Long>
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select a from Account a where a.id = :id")
 	Optional<Account> findByIdForUpdate(@Param("id") Long id);
+
+	/**
+	 * Identifiers only, for the reconciliation sweep - see
+	 * {@code LedgerReconciliationServiceImpl#reconcileAllAccounts}. Replaces a {@code findAll()}
+	 * that hydrated every account into the persistence context purely to read one field off each.
+	 */
+	@Query("select a.id from Account a order by a.id")
+	List<Long> findAllAccountIds();
 }

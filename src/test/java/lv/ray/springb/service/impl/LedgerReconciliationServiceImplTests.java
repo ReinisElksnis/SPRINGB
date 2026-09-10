@@ -1,13 +1,7 @@
 package lv.ray.springb.service.impl;
 
 import lv.ray.springb.dto.ReconciliationResult;
-import lv.ray.springb.entity.Account;
-import lv.ray.springb.entity.AppUser;
-import lv.ray.springb.entity.Operation;
-import lv.ray.springb.entity.OperationType;
 import lv.ray.springb.repository.AccountRepository;
-import lv.ray.springb.repository.OperationRepository;
-import lv.ray.springb.service.AccountException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,19 +9,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Pure unit tests: the ledger-replay math itself, with every operation hand-built here rather than
- * produced by a real deposit/withdraw/transfer flow. {@code LedgerReconciliationIntegrationTests}
- * covers the case that actually matters most - a real ledger, corrupted after the fact, against a
- * real Postgres.
+ * The replay math is {@link AccountLedgerReplayerTests}'. What is left to test here is the part
+ * this class is actually responsible for: which accounts get swept, and - the point of the split -
+ * that it delegates instead of replaying inline, since an inline call would be a self-invocation
+ * that silently bypasses the proxy and collapses every account back into one transaction.
  */
 @ExtendWith(MockitoExtension.class)
 class LedgerReconciliationServiceImplTests
@@ -37,125 +30,61 @@ class LedgerReconciliationServiceImplTests
 	private AccountRepository accountRepository;
 
 	@Mock
-	private OperationRepository operationRepository;
+	private AccountLedgerReplayer replayer;
 
 	private LedgerReconciliationServiceImpl reconciliationService;
-
-	private Account account;
 
 	@BeforeEach
 	void setUp()
 	{
-		reconciliationService = new LedgerReconciliationServiceImpl(accountRepository, operationRepository);
-
-		final AppUser owner = new AppUser("alice", "alice@example.com", "hash", "Alice");
-		account = new Account(owner, "EUR");
-		account.setId(10L);
+		reconciliationService = new LedgerReconciliationServiceImpl(accountRepository, replayer);
 	}
 
-	private Operation operation(final Long id, final OperationType type, final String amount,
-			final String balanceAfter)
+	private static ReconciliationResult consistent(final Long accountId)
 	{
-		final Operation operation = new Operation(account, type, new BigDecimal(amount), new BigDecimal(balanceAfter),
-				null);
-		operation.setId(id);
-		return operation;
+		return new ReconciliationResult(accountId, true, List.of());
 	}
 
 	@Test
-	void reconcileAccount_isConsistentWhenLedgerMathAndAccountBalanceAllAgree()
+	void reconcileAccount_delegatesToTheReplayer()
 	{
-		account.setBalance(new BigDecimal("50.00"));
-		when(accountRepository.findById(10L)).thenReturn(Optional.of(account));
-		when(operationRepository.findByAccountIdOrderByIdAsc(10L)).thenReturn(List.of(
-				operation(1L, OperationType.DEPOSIT, "100.00", "100.00"),
-				operation(2L, OperationType.WITHDRAWAL, "30.00", "70.00"),
-				operation(3L, OperationType.TRANSFER_OUT, "20.00", "50.00")));
+		final ReconciliationResult expected = consistent(10L);
+		when(replayer.replay(10L)).thenReturn(expected);
 
-		final ReconciliationResult result = reconciliationService.reconcileAccount(10L);
-
-		assertThat(result.consistent()).isTrue();
-		assertThat(result.discrepancies()).isEmpty();
+		assertThat(reconciliationService.reconcileAccount(10L)).isSameAs(expected);
 	}
 
 	@Test
-	void reconcileAccount_flagsAnOperationWhoseBalanceAfterDoesNotFollowFromTheLedgerMath()
+	void reconcileAllAccounts_replaysEveryAccountSeparately()
 	{
-		// Op 2 is corrupted: 100.00 - 30.00 should be 70.00, but 80.00 was recorded. Op 3 correctly
-		// follows from the corrupted 80.00 (90.00 after a +10 deposit) - proving the resync after a
-		// flagged row means only the one bad row is reported, not everything after it too.
-		account.setBalance(new BigDecimal("90.00"));
-		when(accountRepository.findById(10L)).thenReturn(Optional.of(account));
-		when(operationRepository.findByAccountIdOrderByIdAsc(10L)).thenReturn(List.of(
-				operation(1L, OperationType.DEPOSIT, "100.00", "100.00"),
-				operation(2L, OperationType.WITHDRAWAL, "30.00", "80.00"),
-				operation(3L, OperationType.DEPOSIT, "10.00", "90.00")));
-
-		final ReconciliationResult result = reconciliationService.reconcileAccount(10L);
-
-		assertThat(result.consistent()).isFalse();
-		assertThat(result.discrepancies()).hasSize(1);
-		assertThat(result.discrepancies().get(0)).contains("Operation 2").contains("70.00").contains("80.00");
-	}
-
-	@Test
-	void reconcileAccount_flagsAnAccountBalanceThatDisagreesWithAnOtherwiseConsistentLedger()
-	{
-		// The ledger itself is perfectly self-consistent (each row follows from the last) - only
-		// the cached Account.balance column has drifted from what the ledger actually says.
-		account.setBalance(new BigDecimal("999.99"));
-		when(accountRepository.findById(10L)).thenReturn(Optional.of(account));
-		when(operationRepository.findByAccountIdOrderByIdAsc(10L)).thenReturn(List.of(
-				operation(1L, OperationType.DEPOSIT, "100.00", "100.00"),
-				operation(2L, OperationType.WITHDRAWAL, "30.00", "70.00")));
-
-		final ReconciliationResult result = reconciliationService.reconcileAccount(10L);
-
-		assertThat(result.consistent()).isFalse();
-		assertThat(result.discrepancies()).hasSize(1);
-		assertThat(result.discrepancies().get(0)).contains("999.99").contains("70.00");
-	}
-
-	@Test
-	void reconcileAccount_isConsistentForAnAccountWithNoOperationsYet()
-	{
-		account.setBalance(BigDecimal.ZERO);
-		when(accountRepository.findById(10L)).thenReturn(Optional.of(account));
-		when(operationRepository.findByAccountIdOrderByIdAsc(10L)).thenReturn(List.of());
-
-		final ReconciliationResult result = reconciliationService.reconcileAccount(10L);
-
-		assertThat(result.consistent()).isTrue();
-	}
-
-	@Test
-	void reconcileAccount_throwsNotFoundForAnUnknownAccount()
-	{
-		when(accountRepository.findById(404L)).thenReturn(Optional.empty());
-
-		assertThatThrownBy(() -> reconciliationService.reconcileAccount(404L))
-				.isInstanceOf(AccountException.class);
-	}
-
-	@Test
-	void reconcileAllAccounts_reconcilesEveryAccountIndependently()
-	{
-		final Account other = new Account(account.getOwner(), "EUR");
-		other.setId(20L);
-		other.setBalance(BigDecimal.ZERO);
-
-		account.setBalance(new BigDecimal("100.00"));
-
-		when(accountRepository.findAll()).thenReturn(List.of(account, other));
-		when(accountRepository.findById(10L)).thenReturn(Optional.of(account));
-		when(accountRepository.findById(20L)).thenReturn(Optional.of(other));
-		when(operationRepository.findByAccountIdOrderByIdAsc(10L)).thenReturn(List.of(
-				operation(1L, OperationType.DEPOSIT, "100.00", "100.00")));
-		when(operationRepository.findByAccountIdOrderByIdAsc(20L)).thenReturn(List.of());
+		when(accountRepository.findAllAccountIds()).thenReturn(List.of(10L, 20L));
+		when(replayer.replay(10L)).thenReturn(consistent(10L));
+		when(replayer.replay(20L)).thenReturn(consistent(20L));
 
 		final List<ReconciliationResult> results = reconciliationService.reconcileAllAccounts();
 
 		assertThat(results).hasSize(2);
 		assertThat(results).allMatch(ReconciliationResult::consistent);
+
+		// One replay call per account, each of which is a separate REQUIRES_NEW transaction - this
+		// is what bounds the sweep's memory to a single account at a time.
+		verify(replayer).replay(10L);
+		verify(replayer).replay(20L);
+		verifyNoMoreInteractions(replayer);
+	}
+
+	/**
+	 * Guards the memory fix directly: the sweep must ask for identifiers, never hydrate every
+	 * account entity to read one field off each.
+	 */
+	@Test
+	void reconcileAllAccounts_fetchesIdentifiersRatherThanEntities()
+	{
+		when(accountRepository.findAllAccountIds()).thenReturn(List.of());
+
+		reconciliationService.reconcileAllAccounts();
+
+		verify(accountRepository).findAllAccountIds();
+		verifyNoMoreInteractions(accountRepository);
 	}
 }

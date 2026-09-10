@@ -1,6 +1,7 @@
 package lv.ray.springb.service.impl;
 
 import lv.ray.springb.constants.ApiConstants.Messages;
+import lv.ray.springb.dto.AccountOperationEvent;
 import lv.ray.springb.entity.Account;
 import lv.ray.springb.entity.IdempotencyRecord;
 import lv.ray.springb.entity.Operation;
@@ -9,6 +10,7 @@ import lv.ray.springb.repository.AccountRepository;
 import lv.ray.springb.repository.IdempotencyRecordRepository;
 import lv.ray.springb.repository.OperationRepository;
 import lv.ray.springb.service.AccountException;
+import lv.ray.springb.service.outbox.OutboxAppender;
 import lv.ray.springb.service.validation.AccountOperationValidator;
 
 import org.springframework.data.util.Pair;
@@ -38,6 +40,12 @@ import java.util.UUID;
  * that follows would blow up with {@code UnexpectedRollbackException} instead of returning the
  * winner's result. Suspending into a genuinely separate transaction is what makes the try/catch
  * in {@code AccountServiceImpl} safe to do at all.
+ *
+ * <p>Each method also appends an event to the outbox through {@link OutboxAppender}, inside this
+ * same transaction. That placement is load-bearing: the event, the ledger row, the balance and the
+ * idempotency key all commit together or not at all, so there is no ordering of failures that can
+ * leave an event describing money that never moved, or moved money nobody downstream was told
+ * about. See {@code OutboxAppender} for why it must not open a transaction of its own.
  */
 @Component
 public class AccountMutationExecutor
@@ -51,15 +59,19 @@ public class AccountMutationExecutor
 
 	private final AccountOperationValidator validator;
 
+	private final OutboxAppender outboxAppender;
+
 	public AccountMutationExecutor(final AccountRepository accountRepository,
 			final OperationRepository operationRepository,
 			final IdempotencyRecordRepository idempotencyRecordRepository,
-			final AccountOperationValidator validator)
+			final AccountOperationValidator validator,
+			final OutboxAppender outboxAppender)
 	{
 		this.accountRepository = accountRepository;
 		this.operationRepository = operationRepository;
 		this.idempotencyRecordRepository = idempotencyRecordRepository;
 		this.validator = validator;
+		this.outboxAppender = outboxAppender;
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -74,6 +86,7 @@ public class AccountMutationExecutor
 		final Operation operation = operationRepository.save(
 				new Operation(account, OperationType.DEPOSIT, amount, account.getBalance(), null));
 
+		publish(account, operation);
 		claimKey(idempotencyKey, ownerUsername, operation.getId(), null,
 				RequestFingerprint.forDeposit(accountId, amount));
 		return operation;
@@ -92,6 +105,7 @@ public class AccountMutationExecutor
 		final Operation operation = operationRepository.save(
 				new Operation(account, OperationType.WITHDRAWAL, amount, account.getBalance(), null));
 
+		publish(account, operation);
 		claimKey(idempotencyKey, ownerUsername, operation.getId(), null,
 				RequestFingerprint.forWithdrawal(accountId, amount));
 		return operation;
@@ -125,9 +139,29 @@ public class AccountMutationExecutor
 		final Operation credit = operationRepository.save(
 				new Operation(to, OperationType.TRANSFER_IN, amount, to.getBalance(), transferGroupId));
 
+		// Two events, not one: the debit and the credit are facts about two different accounts, and
+		// a consumer that cares about only one of them should not have to parse an event about the
+		// other to find it. They stay correlatable through the shared transferGroupId.
+		publish(from, debit);
+		publish(to, credit);
+
 		claimKey(idempotencyKey, ownerUsername, null, transferGroupId,
 				RequestFingerprint.forTransfer(fromAccountId, toAccountId, amount));
 		return Pair.of(debit, credit);
+	}
+
+	/**
+	 * Emits the ledger entry as an outbox event. Takes the owner from the account rather than from
+	 * the caller's {@code ownerUsername} parameter: for the credit leg of a transfer those two are
+	 * different people, and attributing the recipient's event to the sender would be wrong.
+	 */
+	private void publish(final Account account, final Operation operation)
+	{
+		outboxAppender.append("ACCOUNT", String.valueOf(account.getId()), operation.getType().name(),
+				new AccountOperationEvent(operation.getId(), account.getId(),
+						account.getOwner().getUsername(), operation.getType(), operation.getAmount(),
+						operation.getBalanceAfter(), account.getCurrency(), operation.getTransferGroupId(),
+						operation.getCreatedAt()));
 	}
 
 	private Account lock(final Long accountId)

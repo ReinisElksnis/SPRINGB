@@ -124,7 +124,19 @@ to one of the caller's own accounts.
   account(s), amount), so reusing one key for a *different* request is rejected rather than
   silently returning the first result. Rows predating the fingerprint column skip that check.
 - **Concurrent writes take a pessimistic row lock** (`AccountRepository`, `PESSIMISTIC_WRITE`);
-  `AccountServiceConcurrencyTests` covers it.
+  `AccountServiceConcurrencyTests` covers it. Transfers always lock in ascending account-id order,
+  so two transfers running in opposite directions between the same pair cannot deadlock.
+- **Events go through a transactional outbox.** Every ledger row also writes an `outbox_messages`
+  row *in the same transaction* (`OutboxAppender`, which deliberately has no `@Transactional` of
+  its own so it joins the caller), so an event and the money it describes commit together or not
+  at all — no dual write to a broker. `OutboxRelay` polls with `SELECT … FOR UPDATE SKIP LOCKED`,
+  which lets several instances divide the backlog with no leader election, and retries with
+  exponential backoff plus full jitter before parking a message as `DEAD`. Delivery is
+  at-least-once by design; consumers must be idempotent. Tuning lives under `springb.outbox.*`.
+- **Ledger replay streams.** Reconciliation reads a projection through a cursor
+  (`OperationRepository.streamLedgerEntries`) rather than materialising every `Operation` entity,
+  and runs one transaction per account (`AccountLedgerReplayer`), so peak heap is bounded by the
+  fetch size instead of by the length of the ledger.
 - **Amount scale follows ISO 4217 per currency**, not a blanket two decimals — JPY allows none,
   KWD/BHD/OMR/JOD/TND allow three. Money columns are `NUMERIC(19,3)` (widened in `V2`) so a
   three-decimal amount is not silently rounded on write.
@@ -142,11 +154,22 @@ src/main/java/lv/ray/springb/
   constants/   ApiConstants — paths, JSON keys, user-facing text
   controller/  Auth, Account, Customer, Order, Demo
   dto/         request/response records
-  entity/      JPA entities (AppUser, Account, Operation, Customer, Order, IdempotencyRecord)
+  entity/      JPA entities (AppUser, Account, Operation, Customer, Order, IdempotencyRecord,
+               OutboxMessage)
   repository/  Spring Data repositories
-  service/     interfaces + impl/ + validation/
+  service/     interfaces + impl/ + validation/ + outbox/
 src/main/resources/
   db/migration/  Flyway migrations
   static/        index / login / register pages
   messages*.properties  i18n for CustomerType display names (en, lv)
 ```
+
+## Deep dives
+
+`docs/deep-dives/` explains the reasoning behind the mechanisms above — why the row lock is
+pessimistic rather than optimistic, why `SKIP LOCKED` is right for the outbox and wrong for an
+account, why the same `REQUIRES_NEW` annotation is used for rollback semantics in one place and for
+bounding heap in another, and what each of them fails like when removed. Written to be read with the
+code open: [concurrency](docs/deep-dives/concurrency.md),
+[memory management](docs/deep-dives/memory-management.md),
+[distributed systems](docs/deep-dives/distributed-systems.md).
