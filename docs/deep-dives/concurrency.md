@@ -164,7 +164,74 @@ redoing and discarding a whole transaction.
 
 ---
 
-## 2b. Where the crossover actually is — measured
+## 2b. Locking in Java instead — and why it is the fastest wrong answer
+
+`JavaLockAccountMutationExecutor`, `AccountLockRegistry` — `src/main/java/lv/ray/springb/service/impl/`
+
+The third strategy: no database lock, no version reliance, just a `ReentrantLock` per account held in
+this JVM. It is worth building because it is the answer most people reach for first, because it
+**genuinely works**, and because the benchmark below says it is the fastest of the three.
+
+### It is correct on one node
+
+`withinOneJvmTheJavaLockPreventsEveryConflict` records **zero** conflicts under 8 threads hammering
+one account. That is not a weak result — with real mutual exclusion a conflict is impossible, not
+merely unlikely, so zero is a deterministic assertion rather than a hopeful one. On a single
+instance this is a legitimate design.
+
+### Failure one: there is more than one JVM
+
+`AccountLockRegistry` is an object on a heap. A second instance of the application has its own,
+guarding nothing in common. `acrossTwoInstancesTheJavaLockStopsProtectingAnything` models this by
+giving half the threads a second registry — and conflicts appear immediately.
+
+**Nothing about the code changed. Only the number of copies of the process did.** The guarantee is
+not weakened by scaling out, it is deleted, by a deployment decision that touches no source file.
+This repo ships a Dockerfile; that is not hypothetical.
+
+The fix is not a better Java lock. It is a lock both instances can see — which is the database row
+lock the pessimistic path was already using.
+
+### Failure two: the lock released before the commit
+
+This one bites on a single node, and it is the version most people write first:
+
+```java
+@Transactional
+public void transfer(...) {
+    lock.lock();
+    try { ...work... } finally { lock.unlock(); }   // unlocked here — commit happens AFTER
+}
+```
+
+The method returns to the transaction interceptor, which has not committed yet. In the gap between
+`unlock` and commit, another thread takes the lock, reads the account, and sees the balance *before*
+this transfer — because this transfer is still uncommitted. Both compute from the same starting
+value. Each held the lock for the whole of its own work, and the update was still lost.
+`lockingInsideTheTransactionReleasesItBeforeCommitAndLosesUpdates` demonstrates it with one registry
+in one JVM.
+
+**A lock must outlive the transaction it protects.** A lock released before commit protects the
+computation, not the data. Same reason `OutboxRelay` holds its transaction open across the dispatch:
+a claim that ends before the work does is not a claim.
+
+### Two details in the registry worth stealing
+
+**A lock per account is a memory leak.** `ConcurrentHashMap<Long, Lock>` with `computeIfAbsent`
+grows an entry per account ever touched and never removes one — you cannot evict a lock somebody
+holds, and check-then-remove is itself a race. Striping (a fixed array, indexed by hash) makes
+memory constant. The cost is *false contention* — two unrelated accounts on one stripe serialize
+needlessly — which is a throughput cost and never a correctness one. Over-serializing is safe.
+
+**Order by the lock, not by the entity.** The two-lock ordering rule from §2 still applies, but
+translating it as "lowest account id first" is wrong once locks are striped, because the hash does
+not preserve order: ids (1, 4) might map to stripes (1, 0) while (0, 3) map to (0, 3), and two
+threads would acquire in opposite orders and deadlock. The ordering has to be over the objects
+actually being locked.
+
+---
+
+## 2c. All three, measured under identical load
 
 `TransferStrategyBenchmark` — `src/integrationTest/java/lv/ray/springb/service/TransferStrategyBenchmark.java`
 
@@ -174,70 +241,78 @@ redoing and discarding a whole transaction.
 
 96 transfers, fixed, split over N threads all drawing from **one shared account**. Total work is
 constant, so threads is purely a contention dial. Each thread transfers to its own destination, so
-the source is the only contended row. Medians of 5 runs; every run was checked to leave the balance
-exact.
+the source is the only contended row. Medians of 5 runs; every run balance-checked.
 
 ```
 threads  strategy        millis    txn/sec   mean us    p95 us    wasted  >budget
-1        PESSIMISTIC        592      162.1      5296     10484         0        0
-1        OPTIMISTIC         431      222.6      3670      4660         0        0
-2        PESSIMISTIC        333      287.8      5240      6422         0        0
-2        OPTIMISTIC         513      186.8      7428      5701         5        0
-4        PESSIMISTIC        425      225.8     13678     17461         0        0
-4        OPTIMISTIC         479      200.1     10352      4697        17        1
-8        PESSIMISTIC        435      220.2     27882     42322         0        0
-8        OPTIMISTIC         831      115.5     31315    162747        44        4
-16       PESSIMISTIC        425      225.5     50672     64448         0        0
-16       OPTIMISTIC         831      115.4     57847    269034        95        9
+1        PESSIMISTIC        567      169.1      5030      7114         0        0
+1        OPTIMISTIC         419      228.6      3528      4348         0        0
+1        JAVA_LOCK          350      273.8      2817      3389         0        0
+2        PESSIMISTIC        327      293.3      5050      6675         0        0
+2        OPTIMISTIC         453      211.6      6082      4432         8        0
+2        JAVA_LOCK          325      294.9      4945      8824         0        0
+4        PESSIMISTIC        310      309.0      9382     11985         0        0
+4        OPTIMISTIC         486      197.5     10582      5706        18        1
+4        JAVA_LOCK          313      305.8      8669     25657         0        0
+8        PESSIMISTIC        379      253.2     22219     30065         0        0
+8        OPTIMISTIC         582      164.9     20492    106029        38        3
+8        JAVA_LOCK          310      309.0     15563     61844         0        0
+16       PESSIMISTIC        323      297.0     35167     45411         0        0
+16       OPTIMISTIC         646      148.4     38897    272037        66        6
+16       JAVA_LOCK          315      304.3     30426     87508         0        0
 ```
 
-**The crossover is between one and two concurrent writers to the same row.** That is much earlier
-than intuition suggests, and it is the headline finding.
+**The headline: the fastest strategy at every single contention level is the one you must not
+ship.** JAVA_LOCK leads throughput throughout — 273.8 txn/sec uncontended, still 304.3 at 16 threads
+— because an in-JVM lock costs nanoseconds while a `FOR UPDATE` costs a database round trip and pins
+a connection for the duration. A benchmark that measured only speed would recommend it, and would be
+wrong, because the thing that disqualifies it does not appear in any column. **Correctness is not a
+performance metric, and it is not discoverable by measuring.**
 
-Four things in that table are worth being able to explain:
+Beyond that:
 
-**1. Pessimistic throughput is flat — ~220 txn/sec at 2, 4, 8 and 16 threads.** Adding threads adds
-no throughput, because writes to one row serialize no matter what. But it adds no *waste* either.
-The lock converts concurrency into an orderly queue, and a queue's total work does not grow with its
-length.
+**Optimistic vs pessimistic crosses over between one and two concurrent writers** — much earlier
+than intuition suggests. At one thread optimistic is ~35% faster (228.6 vs 169.1); from two threads
+onward pessimistic leads and the gap widens to roughly 2x by 16.
 
-**2. Optimistic wins only when uncontended** — 222.6 vs 162.1 txn/sec at one thread, ~37% faster,
-because it never takes a lock, never waits, and issues less work per transaction. That is the whole
-case for it, and it is a real case.
+**Pessimistic throughput is flat** — 253–309 txn/sec from 2 threads to 16. Writes to one row
+serialize regardless, so threads add no throughput; but they add no *waste* either. A queue's total
+work does not grow with its length.
 
-**3. Wasted work grows faster than the contention does:** 0 → 5 → 17 → 44 → 95. At 16 threads there
-are 95 discarded attempts for 96 successful transfers — the system does roughly twice the work and
-throws half of it away. Each discard is a full transaction: reads, validation, ledger rows, outbox
-rows, all rolled back. This is why optimistic locking degrades rather than merely plateaus: every
-loser makes the next round more expensive.
+**Optimistic wasted work grows faster than the contention:** 0 → 8 → 18 → 38 → 66. At 16 threads
+that is 66 discarded attempts per 96 transfers — each a full transaction with reads, validation,
+ledger and outbox rows, all rolled back. Every loser makes the next round more expensive, which is
+why it degrades rather than plateaus.
 
-**4. The tail is where it really hurts.** Optimistic p95 goes 4.7ms → 269ms, a ~58x blowup.
-Pessimistic goes 10.5ms → 64ms, about 6x. Look at mean versus p95 at 16 threads: pessimistic is
-50.7ms mean / 64.4ms p95 — tight. Optimistic is 57.8ms mean / 269ms p95 — a heavy tail hiding behind
-a similar average.
+**Tail latency separates all three, and it is where averages lie.** At 16 threads the means are
+close (35.2ms / 38.9ms / 30.4ms) while p95 is 45ms pessimistic, 88ms Java-lock, 272ms optimistic.
+Optimistic p95 blows up ~62x from 1 to 16 threads against pessimistic's ~6x. **A lock queue is
+approximately fair; retrying is not** — a blocked thread progresses when its turn comes, while a
+retrying thread re-enters the same lottery each time and can lose repeatedly. That is starvation,
+and it hides completely behind a mean.
 
-That last point is the deepest one and generalises well beyond this code: **a lock queue is
-approximately fair; retrying is not.** A blocked thread is guaranteed to make progress when its turn
-comes. A retrying thread re-enters the same lottery each time and can lose repeatedly — that is
-starvation, and it is what the tail is made of. If you only watch averages, you will not see it.
+Note also that JAVA_LOCK's p95 is consistently worse than the database lock's despite better
+throughput. `new ReentrantLock()` is **non-fair** by default: it allows barging, which raises
+throughput and lengthens the worst case. `new ReentrantLock(true)` reverses that trade. Same
+fairness-versus-throughput dial, one layer up from the database.
 
-And under the *shipped* retry budget of 5, the `>budget` column says 9 of 96 transfers (9.4%) would
-have failed with a 409 at 16 threads. The optimistic path does not just get slower under contention;
-it starts refusing work.
+And under the shipped retry budget of 5, `>budget` says 6 of 96 transfers (6.25%) would have
+returned 409 at 16 threads. The optimistic path does not merely slow down under contention — it
+starts refusing work.
 
-**So which would you choose?** Not one globally — per account. A typical retail account has one
-writer at a time and optimistic is strictly better. A treasury or settlement account with many
-concurrent writers is exactly where it collapses. That is why the endpoint reports `attempts`:
-it is the signal that tells you which regime a given account is in.
+**So which would you choose?** Not one globally — per account. A retail account has one writer at a
+time and optimistic is strictly better. A treasury or settlement account is exactly where it
+collapses. That is what the `attempts` field in the response is for. And the Java lock is off the
+table entirely for anything that scales horizontally, however fast it looks.
 
 **On trusting these numbers.** One machine, one container, no network between app and database, one
 workload shape. The *shape* of the curves transfers; the absolute figures do not. Two confounds were
-found and removed by looking at results that made no sense — `spring.jpa.show-sql=true` would have
-measured console formatting, and an insufficient warmup initially made the *least* contended case
-look slowest (1179ms against ~500ms for the same strategy under more contention). Less contention
-cannot be slower; that impossibility is what exposed the artifact. Being able to say "I distrusted
-my own benchmark and here is what it was actually measuring" is worth more in an interview than any
-number in the table.
+caught by results that made no sense: `spring.jpa.show-sql=true` would have measured console
+formatting (and unequally, since the optimistic path emits more statements when it retries), and an
+insufficient warmup initially made the *least* contended case the slowest — 1179ms against ~500ms
+for the same strategy under more contention. Less contention cannot be slower; that impossibility is
+what exposed the artifact. Being able to say "I distrusted my own benchmark, and here is what it was
+actually measuring" is worth more in an interview than any number in the table.
 
 ---
 
@@ -406,3 +481,8 @@ Answer out loud before reading the section back.
 13. At 16 threads both strategies have a ~50ms mean, but p95 is 64ms vs 269ms. What causes that
     divergence, and why is the mean misleading?
 14. Which strategy would you put on a treasury account, and which on a retail one?
+15. An in-JVM `ReentrantLock` per account is the fastest of the three here. Why is it still the
+    wrong answer, and what exactly changes to break it?
+16. Why is `ConcurrentHashMap<Long, Lock>` a memory leak, and why is evicting from it hard?
+17. With striped locks, why is "acquire the lower account id first" not sufficient?
+18. A `@Transactional` method takes a lock on entry and releases it on exit. What is still wrong?

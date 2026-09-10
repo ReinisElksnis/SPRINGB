@@ -6,6 +6,7 @@ import lv.ray.springb.dto.OptimisticTransferResultDTO;
 import lv.ray.springb.entity.AppUser;
 import lv.ray.springb.repository.AccountRepository;
 import lv.ray.springb.repository.AppUserRepository;
+import lv.ray.springb.service.impl.JavaLockAccountMutationExecutor;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -115,9 +116,29 @@ class TransferStrategyBenchmark
 	@Autowired
 	private PasswordEncoder passwordEncoder;
 
+	/**
+	 * Used directly rather than through {@code AccountService}: this strategy has no HTTP endpoint,
+	 * deliberately, because it is only correct on a single instance and this application ships a
+	 * Dockerfile. It is measured here to show what that correctness would have bought.
+	 */
+	@Autowired
+	private JavaLockAccountMutationExecutor javaLockExecutor;
+
 	private enum Strategy
 	{
-		PESSIMISTIC, OPTIMISTIC
+		/** {@code SELECT ... FOR UPDATE} - the guarantee lives in the database. */
+		PESSIMISTIC,
+
+		/** No lock; {@code @Version} detects the collision and the caller retries. */
+		OPTIMISTIC,
+
+		/**
+		 * An in-JVM {@code ReentrantLock} per account, held across the transaction. Included because
+		 * the interesting result is that it is <em>fast</em> - the fastest of the three under
+		 * contention - and it is still the wrong answer for anything running more than one instance.
+		 * A benchmark that only measured speed would recommend it.
+		 */
+		JAVA_LOCK
 	}
 
 	private record Sample(long latencyNanos, int attempts)
@@ -302,11 +323,17 @@ class TransferStrategyBenchmark
 	{
 		final String key = "bench-" + UUID.randomUUID();
 
+		// Both of these wait rather than retry, so they are recorded as one attempt by definition.
+		// That asymmetry is the finding, not a gap in the data.
 		if (strategy == Strategy.PESSIMISTIC)
 		{
 			accountService.transfer(from, to, owner, AMOUNT, key);
-			// The pessimistic path has no notion of attempts - it waits rather than retrying - so it
-			// is recorded as one by definition. That asymmetry is the finding, not a gap in the data.
+			return 1;
+		}
+
+		if (strategy == Strategy.JAVA_LOCK)
+		{
+			javaLockExecutor.transferOnce(from, to, owner, AMOUNT, key);
 			return 1;
 		}
 

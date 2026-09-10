@@ -78,10 +78,9 @@ for — it measures rather than asserts, and a timing number is the wrong thing 
 ```
 
 It runs a fixed number of transfers over a rising number of threads contending on one account and
-prints a table comparing the two strategies. On the machine this was developed on the crossover sits
-between one and two concurrent writers: optimistic is ~37% faster uncontended, and by 16 threads it
-does roughly twice the work (95 discarded attempts per 96 transfers) with a p95 latency of 269ms
-against the pessimistic path's 64ms. See
+prints a table comparing all three locking strategies. On the machine this was developed on, the
+optimistic/pessimistic crossover sits between one and two concurrent writers, and the fastest
+strategy at every level is the in-JVM lock — which is also the one that must not be deployed. See
 [the concurrency deep dive](docs/deep-dives/concurrency.md) for the full table and what it means.
 
 Checkstyle is **report-only** (`ignoreFailures = true`) — the existing code predates the ruleset,
@@ -148,6 +147,12 @@ to one of the caller's own accounts.
   the signal for deciding which strategy suits a given account: consistently 1 means optimistic is
   winning, consistently high means a pessimistic lock would do less total work. Both paths share the
   same validation, ledger and idempotency contract, so they are directly comparable.
+- **A third, deliberately unusable strategy.** `JavaLockAccountMutationExecutor` holds a striped
+  in-JVM `ReentrantLock` per account instead of any database lock. It is correct on one instance,
+  it is the fastest of the three in the benchmark, and it has **no HTTP endpoint on purpose**: its
+  guarantee is a heap object, so a second instance of this application silently removes it. It
+  exists to be measured and rejected, and its tests demonstrate both failure modes — two registries
+  (i.e. two JVMs), and a lock released before commit rather than after.
 - **Events go through a transactional outbox.** Every ledger row also writes an `outbox_messages`
   row *in the same transaction* (`OutboxAppender`, which deliberately has no `@Transactional` of
   its own so it joins the caller), so an event and the money it describes commit together or not

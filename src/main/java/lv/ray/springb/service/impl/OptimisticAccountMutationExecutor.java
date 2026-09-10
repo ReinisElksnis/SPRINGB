@@ -1,26 +1,13 @@
 package lv.ray.springb.service.impl;
 
-import lv.ray.springb.constants.ApiConstants.Messages;
-import lv.ray.springb.dto.AccountOperationEvent;
-import lv.ray.springb.entity.Account;
-import lv.ray.springb.entity.IdempotencyRecord;
 import lv.ray.springb.entity.Operation;
-import lv.ray.springb.entity.OperationType;
-import lv.ray.springb.repository.AccountRepository;
-import lv.ray.springb.repository.IdempotencyRecordRepository;
-import lv.ray.springb.repository.OperationRepository;
-import lv.ray.springb.service.AccountException;
-import lv.ray.springb.service.outbox.OutboxAppender;
-import lv.ray.springb.service.validation.AccountOperationValidator;
 
 import org.springframework.data.util.Pair;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 
 
 /**
@@ -65,35 +52,23 @@ import java.util.UUID;
 public class OptimisticAccountMutationExecutor
 {
 
-	private final AccountRepository accountRepository;
+	private final UnlockedTransferWriter transferWriter;
 
-	private final OperationRepository operationRepository;
-
-	private final IdempotencyRecordRepository idempotencyRecordRepository;
-
-	private final AccountOperationValidator validator;
-
-	private final OutboxAppender outboxAppender;
-
-	public OptimisticAccountMutationExecutor(final AccountRepository accountRepository,
-			final OperationRepository operationRepository,
-			final IdempotencyRecordRepository idempotencyRecordRepository,
-			final AccountOperationValidator validator,
-			final OutboxAppender outboxAppender)
+	public OptimisticAccountMutationExecutor(final UnlockedTransferWriter transferWriter)
 	{
-		this.accountRepository = accountRepository;
-		this.operationRepository = operationRepository;
-		this.idempotencyRecordRepository = idempotencyRecordRepository;
-		this.validator = validator;
-		this.outboxAppender = outboxAppender;
+		this.transferWriter = transferWriter;
 	}
 
 	/**
 	 * One attempt, in its own transaction. {@code REQUIRES_NEW} for the same reason
-	 * {@link AccountMutationExecutor} uses it, plus one specific to this path: a retry is only
+	 * {@code AccountMutationExecutor} uses it, plus one specific to this path: a retry is only
 	 * meaningful if the previous attempt's transaction is completely finished and its persistence
 	 * context discarded, so the next read genuinely goes back to the database instead of returning
 	 * the same stale, already-doomed entity from a first-level cache.
+	 *
+	 * <p>The work itself is {@link UnlockedTransferWriter}'s, shared with the in-JVM locking
+	 * strategy so the two differ only in their guarantee. Everything this class contributes is the
+	 * transaction boundary and the absence of a lock inside it.
 	 *
 	 * @throws org.springframework.dao.OptimisticLockingFailureException if either account was
 	 *           modified between this attempt's read and its flush - the caller is expected to retry
@@ -105,63 +80,6 @@ public class OptimisticAccountMutationExecutor
 	public Pair<Operation, Operation> transferOnce(final Long fromAccountId, final Long toAccountId,
 			final String ownerUsername, final BigDecimal amount, final String idempotencyKey)
 	{
-		final boolean fromFirst = fromAccountId.compareTo(toAccountId) < 0;
-		final Account first = load(fromFirst ? fromAccountId : toAccountId);
-		final Account second = load(fromFirst ? toAccountId : fromAccountId);
-		final Account from = fromFirst ? first : second;
-		final Account to = fromFirst ? second : first;
-
-		validator.validateOwnership(from, ownerUsername);
-		validator.validateSufficientFunds(from, amount);
-		validator.validateSameCurrency(from, to);
-		validator.validateAmountScale(amount, from.getCurrency());
-
-		final String transferGroupId = UUID.randomUUID().toString();
-
-		from.setBalance(from.getBalance().subtract(amount));
-		final Operation debit = operationRepository.save(
-				new Operation(from, OperationType.TRANSFER_OUT, amount, from.getBalance(), transferGroupId));
-
-		to.setBalance(to.getBalance().add(amount));
-		final Operation credit = operationRepository.save(
-				new Operation(to, OperationType.TRANSFER_IN, amount, to.getBalance(), transferGroupId));
-
-		publish(from, debit);
-		publish(to, credit);
-
-		claimKey(idempotencyKey, ownerUsername, transferGroupId,
-				RequestFingerprint.forTransfer(fromAccountId, toAccountId, amount));
-
-		// Forces the versioned UPDATEs and the idempotency-key INSERT to be sent now, so both
-		// failure modes are raised inside this method - where Spring Data's repository proxy
-		// translates them into the DataAccessException types the retry policy discriminates on -
-		// rather than at commit time, where an untranslated provider exception could escape.
-		accountRepository.flush();
-
-		return Pair.of(debit, credit);
-	}
-
-	private Account load(final Long accountId)
-	{
-		// findById, not findByIdForUpdate. The single line that makes this optimistic.
-		return accountRepository.findById(accountId)
-				.orElseThrow(() -> new AccountException(HttpStatus.NOT_FOUND,
-						String.format(Messages.FUNDS_ACCOUNT_NOT_FOUND, accountId)));
-	}
-
-	private void publish(final Account account, final Operation operation)
-	{
-		outboxAppender.append("ACCOUNT", String.valueOf(account.getId()), operation.getType().name(),
-				new AccountOperationEvent(operation.getId(), account.getId(),
-						account.getOwner().getUsername(), operation.getType(), operation.getAmount(),
-						operation.getBalanceAfter(), account.getCurrency(), operation.getTransferGroupId(),
-						operation.getCreatedAt()));
-	}
-
-	private void claimKey(final String idempotencyKey, final String ownerUsername, final String transferGroupId,
-			final String requestFingerprint)
-	{
-		idempotencyRecordRepository.save(
-				new IdempotencyRecord(idempotencyKey, ownerUsername, null, transferGroupId, requestFingerprint));
+		return transferWriter.applyTransfer(fromAccountId, toAccountId, ownerUsername, amount, idempotencyKey);
 	}
 }
